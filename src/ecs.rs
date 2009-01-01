@@ -1,7 +1,8 @@
-use std::fmt;
+use std::{fmt, mem};
 use std::any::{Any, TypeId};
-use std::cell::{UnsafeCell, RefCell, Ref};
+use std::cell::{UnsafeCell, RefCell, Ref, RefMut};
 use std::collections::HashMap;
+use erased_serde::{Serializer, Deserializer};
 
 type Storage = HashMap<TypeId, Vec<(u64, Box<RefCell<dyn Any>>)>>;
 
@@ -45,6 +46,43 @@ impl World {
       None => vec![],
     }
   }
+
+  pub fn get_mut<T: Any>(&self) -> Vec<(Entity, RefMut<T>)> {
+    match self.components().get(&TypeId::of::<T>()) {
+      Some(v) => v
+        .iter()
+        .map(|c| {
+          (
+            Entity::new(self, c.0),
+            RefMut::map(c.1.borrow_mut(), unsafe { |r| r.downcast_mut_unchecked() }),
+          )
+        })
+        .collect(),
+      None => vec![],
+    }
+  }
+
+  pub fn save(&self) {
+    for (t, v) in self.components() {
+      if let Some((ser, de)) = unsafe { COMPONENTS.get(t) } {
+        // use serializer.serialize_map
+        // use bincode::{DefaultOptions};
+        // let mut se = bincode::Serializer::new(
+        //   std::fs::File::create("test").unwrap(),
+        //   DefaultOptions::new(),
+        // );
+        let mut json_se = serde_json::Serializer::pretty(std::fs::File::create("test").unwrap());
+        ser(
+          // Ref::leak(v[0].1.borrow()), // dontleak
+          v[0].1.borrow(),
+          &mut <dyn Serializer>::erase(&mut json_se),
+        );
+
+        // let json_de = serde_json::Deserializer::from_reader(std::fs::File::open("test").unwrap());
+        // de()
+      }
+    }
+  }
 }
 
 pub struct Entity<'w> {
@@ -71,8 +109,8 @@ impl<'w> Entity<'w> {
     self
       .world
       .get()
-      .iter()
-      .filter_map(|c| (c.0.id == self.id).then_some(Ref::clone(&c.1)))
+      .into_iter()
+      .filter_map(|c| (c.0.id == self.id).then_some(c.1))
       .collect()
   }
 
@@ -80,8 +118,25 @@ impl<'w> Entity<'w> {
     self
       .world
       .get()
-      .iter()
-      .find_map(|c| (c.0.id == self.id).then_some(Ref::clone(&c.1)))
+      .into_iter()
+      .find_map(|c| (c.0.id == self.id).then_some(c.1))
+  }
+
+  pub fn get_mut<T: Any>(&self) -> Vec<RefMut<T>> {
+    self
+      .world
+      .get_mut()
+      .into_iter()
+      .filter_map(|c| (c.0.id == self.id).then_some(c.1))
+      .collect()
+  }
+
+  pub fn get_one_mut<T: Any>(&self) -> Option<RefMut<T>> {
+    self
+      .world
+      .get_mut()
+      .into_iter()
+      .find_map(|c| (c.0.id == self.id).then_some(c.1))
   }
 }
 
@@ -90,3 +145,14 @@ impl fmt::Debug for Entity<'_> {
     f.write_fmt(format_args!("{}", self.id))
   }
 }
+
+pub use macros::component;
+
+#[doc(hidden)]
+pub static mut COMPONENTS: HashMap<
+  TypeId,
+  (
+    for<'a> fn(&'a dyn Any, &'a mut dyn Serializer), //remove the silly for
+    fn(&dyn Deserializer) -> Box<dyn Any>,
+  ),
+> = HashMap::with_hasher(unsafe { mem::transmute([0u64; 2]) });

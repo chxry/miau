@@ -1,11 +1,14 @@
 use std::{slice, mem};
-use std::sync::OnceLock;
+use std::mem::MaybeUninit;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 use winit::dpi::PhysicalSize;
-use glam::{Vec3, Mat4};
+use glam::{Vec3, Vec2, Quat, Mat4};
+use obj::{Obj, TexturedVertex};
 use crate::ecs::World;
-use crate::{Result, Transform};
+use crate::scene::{Transform, Model};
+use crate::assets::assets;
+use crate::Result;
 
 pub use shared::{Vertex, SceneConst, ObjConst};
 
@@ -13,22 +16,24 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SAMPLES: u32 = 4;
 
-static mut RENDERER: OnceLock<Renderer> = OnceLock::new();
+static mut RENDERER: MaybeUninit<Renderer> = MaybeUninit::uninit();
 
-pub fn init(window: &Window) {
-  unsafe {
-    let _ = RENDERER.set(pollster::block_on(Renderer::new(window)).unwrap());
-  }
+pub fn init(window: &Window) -> &'static mut Renderer {
+  let _ = unsafe { RENDERER.write(pollster::block_on(Renderer::new(window)).unwrap()) };
+  renderer()
 }
 
+#[inline(always)]
 pub fn renderer() -> &'static mut Renderer {
-  unsafe { RENDERER.get_mut().unwrap() }
+  unsafe { RENDERER.assume_init_mut() }
 }
 
 pub struct Renderer {
-  pub surface: wgpu::Surface,
-  pub device: wgpu::Device,
-  pub queue: wgpu::Queue,
+  surface: wgpu::Surface,
+  device: wgpu::Device,
+  queue: wgpu::Queue,
+  pipeline: wgpu::RenderPipeline,
+  textures: Textures,
 }
 
 impl Renderer {
@@ -55,38 +60,6 @@ impl Renderer {
       )
       .await?;
 
-    Ok(Self {
-      surface,
-      device,
-      queue,
-    })
-  }
-
-  pub fn resize(&mut self, size: PhysicalSize<u32>) {
-    self.surface.configure(
-      &self.device,
-      &wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format: FORMAT,
-        width: size.width,
-        height: size.height,
-        present_mode: wgpu::PresentMode::Fifo,
-        alpha_mode: wgpu::CompositeAlphaMode::Auto,
-        view_formats: vec![],
-      },
-    );
-  }
-}
-
-pub struct Pipeline {
-  pipeline: wgpu::RenderPipeline,
-  textures: Textures,
-  test2: TextureSampler,
-}
-
-impl Pipeline {
-  pub fn new(size: PhysicalSize<u32>) -> Result<Self> {
-    let device = &renderer().device;
     let shader = device.create_shader_module(wgpu::include_spirv!(env!("shaders.spv")));
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
       label: None,
@@ -155,43 +128,50 @@ impl Pipeline {
       label: None,
     });
 
-    let img = image::load_from_memory(include_bytes!("../garfield.png"))?;
-    let test2 = Texture::new(
-      img.width(),
-      img.height(),
-      1,
-      wgpu::TextureFormat::Rgba8UnormSrgb,
-      wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-    )
-    .create_sampler(&pipeline.get_bind_group_layout(0));
-    test2.tex.write(&img.to_rgba8());
+    let textures = Textures::new(&device, window.inner_size());
+
+    assets().register_loader(Mesh::load);
+    assets().register_loader(Texture::load);
 
     Ok(Self {
+      surface,
+      device,
+      queue,
       pipeline,
-      textures: Textures::new(size),
-      test2,
+      textures,
     })
   }
 
   pub fn resize(&mut self, size: PhysicalSize<u32>) {
-    self.textures = Textures::new(size);
+    self.textures = Textures::new(&self.device, size);
+    self.surface.configure(
+      &self.device,
+      &wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format: FORMAT,
+        width: size.width,
+        height: size.height,
+        present_mode: wgpu::PresentMode::AutoVsync,
+        alpha_mode: wgpu::CompositeAlphaMode::Auto,
+        view_formats: vec![],
+      },
+    );
   }
 
   pub fn frame(&mut self, world: &World) {
-    let renderer = renderer();
-    let mut encoder = renderer
+    let mut encoder = self
       .device
       .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-    let surface = renderer.surface.get_current_texture().unwrap();
+    let surface = self.surface.get_current_texture().unwrap();
     let surface_view = surface
       .texture
       .create_view(&wgpu::TextureViewDescriptor::default());
 
     {
-      let meshes = world.get::<std::rc::Rc<Mesh>>();
+      let models = world.get::<Model>();
       let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-          view: &self.textures.fb.view,
+          view: &self.textures.fb,
           resolve_target: Some(&surface_view),
           ops: wgpu::Operations {
             load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -199,7 +179,7 @@ impl Pipeline {
           },
         })],
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-          view: &self.textures.depth.view,
+          view: &self.textures.depth,
           depth_ops: Some(wgpu::Operations {
             load: wgpu::LoadOp::Clear(1.0),
             store: true,
@@ -220,9 +200,9 @@ impl Pipeline {
           ) * Mat4::look_at_lh(Vec3::splat(5.0), Vec3::ZERO, Vec3::Y),
         }),
       );
-      self.test2.bind(&mut render_pass);
-      for (e, mesh) in &meshes {
-        if let Some(t) = e.get_one::<Transform>() {
+      for (e, model) in &models {
+        if let Some(mut t) = e.get_one_mut::<Transform>() {
+          t.rotation *= Quat::from_rotation_y(0.02);
           render_pass.set_push_constants(
             wgpu::ShaderStages::VERTEX,
             mem::size_of::<SceneConst>() as _,
@@ -230,38 +210,48 @@ impl Pipeline {
               transform: t.as_mat4(),
             }),
           );
-          mesh.render(&mut render_pass);
+          model.tex.bind(&mut render_pass);
+          model.mesh.render(&mut render_pass);
         }
       }
     }
 
-    renderer.queue.submit([encoder.finish()]);
+    self.queue.submit([encoder.finish()]);
     surface.present();
   }
 }
 
 struct Textures {
-  fb: Texture,
-  depth: Texture,
+  fb: wgpu::TextureView,
+  depth: wgpu::TextureView,
 }
 
 impl Textures {
-  fn new(size: PhysicalSize<u32>) -> Self {
+  fn new(device: &wgpu::Device, size: PhysicalSize<u32>) -> Self {
+    let desc = wgpu::TextureDescriptor {
+      size: wgpu::Extent3d {
+        width: size.width,
+        height: size.height,
+        depth_or_array_layers: 1,
+      },
+      mip_level_count: 1,
+      sample_count: SAMPLES,
+      dimension: wgpu::TextureDimension::D2,
+      format: FORMAT,
+      usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+      view_formats: &[],
+      label: None,
+    };
     Self {
-      fb: Texture::new(
-        size.width,
-        size.height,
-        SAMPLES,
-        FORMAT,
-        wgpu::TextureUsages::RENDER_ATTACHMENT,
-      ),
-      depth: Texture::new(
-        size.width,
-        size.height,
-        SAMPLES,
-        DEPTH_FORMAT,
-        wgpu::TextureUsages::RENDER_ATTACHMENT,
-      ),
+      fb: device
+        .create_texture(&desc)
+        .create_view(&wgpu::TextureViewDescriptor::default()),
+      depth: device
+        .create_texture(&wgpu::TextureDescriptor {
+          format: DEPTH_FORMAT,
+          ..desc
+        })
+        .create_view(&wgpu::TextureViewDescriptor::default()),
     }
   }
 }
@@ -269,16 +259,12 @@ impl Textures {
 pub struct Texture {
   texture: wgpu::Texture,
   view: wgpu::TextureView,
+  sampler: wgpu::Sampler,
+  bind_group: wgpu::BindGroup,
 }
 
 impl Texture {
-  pub fn new(
-    width: u32,
-    height: u32,
-    sample_count: u32,
-    format: wgpu::TextureFormat,
-    usage: wgpu::TextureUsages,
-  ) -> Self {
+  pub fn new(width: u32, height: u32, format: wgpu::TextureFormat) -> Self {
     let texture = renderer().device.create_texture(&wgpu::TextureDescriptor {
       size: wgpu::Extent3d {
         width,
@@ -286,21 +272,51 @@ impl Texture {
         depth_or_array_layers: 1,
       },
       mip_level_count: 1,
-      sample_count,
+      sample_count: 1,
       dimension: wgpu::TextureDimension::D2,
       format,
-      usage,
+      usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
       view_formats: &[],
       label: None,
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    Self { texture, view }
+    let sampler = renderer()
+      .device
+      .create_sampler(&wgpu::SamplerDescriptor::default());
+    let bind_group = renderer()
+      .device
+      .create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: &renderer().pipeline.get_bind_group_layout(0),
+        entries: &[
+          wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(&view),
+          },
+          wgpu::BindGroupEntry {
+            binding: 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+          },
+        ],
+        label: None,
+      });
+    Self {
+      texture,
+      view,
+      sampler,
+      bind_group,
+    }
   }
 
-  pub fn create_sampler(self, layout: &wgpu::BindGroupLayout) -> TextureSampler {
-    TextureSampler::from(self, layout)
+  fn load(data: &[u8]) -> Result<Self> {
+    let img = image::load_from_memory(data)?;
+    let tex = Texture::new(
+      img.width(),
+      img.height(),
+      wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    tex.write(&img.to_rgba8());
+    Ok(tex)
   }
-
   pub fn write(&self, data: &[u8]) {
     renderer().queue.write_texture(
       wgpu::ImageCopyTexture {
@@ -317,38 +333,6 @@ impl Texture {
       },
       self.texture.size(),
     );
-  }
-}
-
-pub struct TextureSampler {
-  tex: Texture,
-  sampler: wgpu::Sampler,
-  bind_group: wgpu::BindGroup,
-}
-
-impl TextureSampler {
-  fn from(tex: Texture, layout: &wgpu::BindGroupLayout) -> Self {
-    let device = &renderer().device;
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      layout,
-      entries: &[
-        wgpu::BindGroupEntry {
-          binding: 0,
-          resource: wgpu::BindingResource::TextureView(&tex.view),
-        },
-        wgpu::BindGroupEntry {
-          binding: 1,
-          resource: wgpu::BindingResource::Sampler(&sampler),
-        },
-      ],
-      label: None,
-    });
-    Self {
-      tex,
-      sampler,
-      bind_group,
-    }
   }
 
   fn bind<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
@@ -378,6 +362,21 @@ impl Mesh {
       }),
       len: indices.len() as _,
     }
+  }
+
+  fn load(data: &[u8]) -> Result<Self> {
+    let obj: Obj<TexturedVertex, u32> = obj::load_obj(data)?;
+    Ok(Mesh::new(
+      &obj
+        .vertices
+        .iter()
+        .map(|v| Vertex {
+          pos: v.position.into(),
+          uv: Vec2::new(v.texture[0], 1.0 - v.texture[1]),
+        })
+        .collect::<Vec<_>>(),
+      &obj.indices,
+    ))
   }
 
   fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
