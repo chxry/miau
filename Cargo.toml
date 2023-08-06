@@ -4,11 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-wgpu = {version = "0.17", features=["spirv"] }
-winit = "0.28"
+wgpu = { version = "0.17", features = ["spirv"] }
+winit = "0.27"
 tokio = { version = "1", features=["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+imgui = "0.11"
+imgui-winit-support = "0.11"
+imgui-wgpu = "0.24"
+glam = "0.24"
+obj-rs = "0.7"
+shaders = { path = "shaders" }
 
 [build-dependencies]
 spirv-builder = "0.9"
