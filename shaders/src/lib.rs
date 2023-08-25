@@ -1,23 +1,7 @@
 #![no_std]
 use spirv_std::spirv;
 use spirv_std::glam::{Vec4, Vec3, Mat4};
-
-// use this in vs
-#[repr(C)]
-pub struct Vertex {
-  pub pos: Vec3,
-  pub color: Vec3,
-}
-
-#[repr(C)]
-pub struct SceneConst {
-  pub cam: Mat4,
-}
-
-#[repr(C)]
-pub struct ObjConst {
-  pub transform: Mat4,
-}
+use shared::{SceneConst, ObjConst};
 
 #[spirv(vertex)]
 pub fn main_v(

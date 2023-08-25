@@ -61,7 +61,15 @@ dependencies = [
 name = "shaders"
 version = "0.1.0"
 dependencies = [
+ "shared",
  "spirv-std",
+]
+
+[[package]]
+name = "shared"
+version = "0.1.0"
+dependencies = [
+ "glam",
 ]
 
 [[package]]

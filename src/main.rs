@@ -1,7 +1,4 @@
-mod imgui;
-
 use std::{slice, mem};
-use std::mem::MaybeUninit;
 use std::fs::File;
 use std::io::BufReader;
 use wgpu::util::DeviceExt;
@@ -11,8 +8,8 @@ use winit::event::{Event, WindowEvent};
 use winit::dpi::PhysicalSize;
 use glam::{Vec3, Mat4};
 use obj::{Obj, TexturedVertex};
-use shaders::{Vertex, SceneConst, ObjConst};
-use crate::imgui::ImguiPipeline;
+use log::LevelFilter;
+use shared::{Vertex, SceneConst, ObjConst};
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -22,39 +19,36 @@ const SAMPLES: u32 = 4;
 
 #[tokio::main]
 async fn main() -> Result {
-  tracing_subscriber::fmt::init();
+  env_logger::builder()
+    .filter_level(LevelFilter::Info)
+    .filter(Some("wgpu_core"), LevelFilter::Warn)
+    .init();
   let event_loop = EventLoop::new();
   let window = WindowBuilder::new().build(&event_loop)?;
   let mut renderer = Renderer::new(&window).await?;
 
-  let mut imgui_pipeline = ImguiPipeline::new(&renderer, &window);
-
-  event_loop.run(move |event, _, control_flow| {
-    imgui_pipeline.handle_event(&window, &event);
-    match event {
-      Event::WindowEvent { event, .. } => match event {
-        WindowEvent::Resized(size) => renderer.resize(size),
-        WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-        _ => {}
-      },
-      Event::RedrawRequested(..) => {
-        let mut encoder = renderer
-          .device
-          .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        let surface = renderer.surface.get_current_texture().unwrap();
-        let surface_view = surface
-          .texture
-          .create_view(&wgpu::TextureViewDescriptor::default());
-
-        renderer.render(&mut encoder, &surface.texture, &surface_view);
-        imgui_pipeline.render(&renderer, &window, &mut encoder, &surface_view);
-
-        renderer.queue.submit([encoder.finish()]);
-        surface.present();
-      }
-      Event::MainEventsCleared => window.request_redraw(),
+  event_loop.run(move |event, _, control_flow| match event {
+    Event::WindowEvent { event, .. } => match event {
+      WindowEvent::Resized(size) => renderer.resize(size),
+      WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
       _ => {}
-    };
+    },
+    Event::RedrawRequested(..) => {
+      let mut encoder = renderer
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+      let surface = renderer.surface.get_current_texture().unwrap();
+      let surface_view = surface
+        .texture
+        .create_view(&wgpu::TextureViewDescriptor::default());
+
+      renderer.render(&mut encoder, &surface.texture, &surface_view);
+
+      renderer.queue.submit([encoder.finish()]);
+      surface.present();
+    }
+    Event::MainEventsCleared => window.request_redraw(),
+    _ => {}
   });
 }
 
@@ -63,9 +57,7 @@ pub struct Renderer {
   device: wgpu::Device,
   queue: wgpu::Queue,
   pipeline: wgpu::RenderPipeline,
-  fb: MaybeUninit<Texture>,
-  depth: MaybeUninit<Texture>,
-  test: MaybeUninit<Mesh>,
+  textures: Textures,
 }
 
 impl Renderer {
@@ -141,35 +133,21 @@ impl Renderer {
       label: None,
     });
 
+    let size = window.inner_size();
+    let textures = Textures::new(&device, size);
     let mut r = Renderer {
       surface,
       device,
       queue,
       pipeline,
-      fb: MaybeUninit::uninit(),
-      depth: MaybeUninit::uninit(),
-      test: MaybeUninit::uninit(),
+      textures,
     };
-
-    let obj: Obj<TexturedVertex, u32> = obj::load_obj(BufReader::new(File::open("garfield.obj")?))?;
-    r.test.write(
-      r.create_mesh(
-        &obj
-          .vertices
-          .iter()
-          .map(|v| Vertex {
-            pos: v.position.into(),
-            color: v.normal.into(),
-          })
-          .collect::<Vec<_>>(),
-        &obj.indices,
-      ),
-    );
-    r.resize(window.inner_size());
+    r.resize(size);
     Ok(r)
   }
 
   fn resize(&mut self, size: PhysicalSize<u32>) {
+    self.textures = Textures::new(&self.device, size);
     self.surface.configure(
       &self.device,
       &wgpu::SurfaceConfiguration {
@@ -182,21 +160,6 @@ impl Renderer {
         view_formats: vec![],
       },
     );
-    // probably leaking old textures
-    self.fb.write(self.create_tex(
-      size.width,
-      size.height,
-      SAMPLES,
-      FORMAT,
-      wgpu::TextureUsages::RENDER_ATTACHMENT,
-    ));
-    self.depth.write(self.create_tex(
-      size.width,
-      size.height,
-      SAMPLES,
-      DEPTH_FORMAT,
-      wgpu::TextureUsages::RENDER_ATTACHMENT,
-    ));
   }
 
   fn render(
@@ -207,7 +170,7 @@ impl Renderer {
   ) {
     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
       color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-        view: &unsafe { self.fb.assume_init_ref() }.view,
+        view: &self.textures.fb.view,
         resolve_target: Some(view),
         ops: wgpu::Operations {
           load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -215,7 +178,7 @@ impl Renderer {
         },
       })],
       depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-        view: &unsafe { self.depth.assume_init_ref() }.view,
+        view: &self.textures.depth.view,
         depth_ops: Some(wgpu::Operations {
           load: wgpu::LoadOp::Clear(1.0),
           store: true,
@@ -240,18 +203,53 @@ impl Renderer {
         transform: Mat4::from_rotation_y(0.5),
       }),
     );
-    unsafe { self.test.assume_init_ref() }.render(&mut render_pass);
+    // unsafe { self.test.assume_init_ref() }.render(&mut render_pass);
   }
+}
 
-  fn create_tex(
-    &self,
+struct Textures {
+  fb: Texture,
+  depth: Texture,
+}
+
+impl Textures {
+  fn new(device: &wgpu::Device, size: PhysicalSize<u32>) -> Self {
+    Self {
+      fb: Texture::new(
+        device,
+        size.width,
+        size.height,
+        SAMPLES,
+        FORMAT,
+        wgpu::TextureUsages::RENDER_ATTACHMENT,
+      ),
+      depth: Texture::new(
+        device,
+        size.width,
+        size.height,
+        SAMPLES,
+        DEPTH_FORMAT,
+        wgpu::TextureUsages::RENDER_ATTACHMENT,
+      ),
+    }
+  }
+}
+
+struct Texture {
+  texture: wgpu::Texture,
+  view: wgpu::TextureView,
+}
+
+impl Texture {
+  fn new(
+    device: &wgpu::Device,
     width: u32,
     height: u32,
     sample_count: u32,
     format: wgpu::TextureFormat,
     usage: wgpu::TextureUsages,
   ) -> Texture {
-    let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
       size: wgpu::Extent3d {
         width,
         height,
@@ -268,31 +266,6 @@ impl Renderer {
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     Texture { texture, view }
   }
-
-  fn create_mesh(&self, verts: &[Vertex], indices: &[u32]) -> Mesh {
-    Mesh {
-      vert_buf: self
-        .device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-          contents: cast_slice(verts),
-          usage: wgpu::BufferUsages::VERTEX,
-          label: None,
-        }),
-      idx_buf: self
-        .device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-          contents: cast_slice(indices),
-          usage: wgpu::BufferUsages::INDEX,
-          label: None,
-        }),
-      len: indices.len() as _,
-    }
-  }
-}
-
-struct Texture {
-  texture: wgpu::Texture,
-  view: wgpu::TextureView,
 }
 
 struct Mesh {
@@ -302,6 +275,22 @@ struct Mesh {
 }
 
 impl Mesh {
+  fn new(device: &wgpu::Device, verts: &[Vertex], indices: &[u32]) -> Self {
+    Mesh {
+      vert_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        contents: cast_slice(verts),
+        usage: wgpu::BufferUsages::VERTEX,
+        label: None,
+      }),
+      idx_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        contents: cast_slice(indices),
+        usage: wgpu::BufferUsages::INDEX,
+        label: None,
+      }),
+      len: indices.len() as _,
+    }
+  }
+
   fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
     render_pass.set_vertex_buffer(0, self.vert_buf.slice(..));
     render_pass.set_index_buffer(self.idx_buf.slice(..), wgpu::IndexFormat::Uint32);
