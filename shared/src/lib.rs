@@ -1,10 +1,10 @@
 #![no_std]
-use glam::{Vec3, Mat4};
+use glam::{Vec3, Vec2, Mat4};
 
 #[repr(C)]
 pub struct Vertex {
   pub pos: Vec3,
-  pub color: Vec3,
+  pub uv: Vec2,
 }
 
 #[repr(C)]
