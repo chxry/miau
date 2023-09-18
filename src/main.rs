@@ -1,4 +1,4 @@
-#![feature(downcast_unchecked, const_collections_with_hasher, cell_leak)]
+#![feature(downcast_unchecked, const_collections_with_hasher)]
 mod gfx;
 mod ecs;
 mod assets;
@@ -8,6 +8,7 @@ use winit::window::WindowBuilder;
 use winit::event_loop::EventLoop;
 use winit::event::{Event, WindowEvent};
 use log::LevelFilter;
+use glam::Vec3;
 use crate::ecs::World;
 use crate::scene::{Transform, Model};
 
@@ -17,8 +18,9 @@ fn main() -> Result {
   env_logger::builder()
     .filter_level(LevelFilter::Info)
     .filter(Some("wgpu_core"), LevelFilter::Warn)
+    .filter(Some("wgpu_hal"), LevelFilter::Warn)
     .init();
-  let event_loop = EventLoop::new();
+  let event_loop = EventLoop::new()?;
   let window = WindowBuilder::new().build(&event_loop)?;
   let assets = assets::init();
   let renderer = gfx::init(&window);
@@ -27,6 +29,17 @@ fn main() -> Result {
     mesh: assets.load("garfield.obj")?,
     tex: assets.load("garfield.png")?,
   });
+  world
+    .spawn()
+    .insert(
+      Transform::new()
+        .pos(Vec3::new(-4.0, 0.0, 2.0))
+        .scale(Vec3::splat(0.5)),
+    )
+    .insert(Model {
+      mesh: assets.load("garfield.obj")?,
+      tex: assets.load("garfield.png")?,
+    });
 
   world.save();
 
@@ -37,14 +50,17 @@ fn main() -> Result {
 
   // let h: assets::Handle<gfx::Mesh> = bincode::deserialize(&std::fs::read("test")?)?;
 
-  event_loop.run(move |event, _, control_flow| match event {
+  event_loop.run(move |event, elwt| match event {
     Event::WindowEvent { event, .. } => match event {
       WindowEvent::Resized(size) => renderer.resize(size),
-      WindowEvent::CloseRequested => control_flow.set_exit(),
+      WindowEvent::CloseRequested => elwt.exit(),
+      WindowEvent::RedrawRequested => renderer.frame(&world),
       _ => {}
     },
-    Event::RedrawRequested(..) => renderer.frame(&world),
-    Event::MainEventsCleared => window.request_redraw(),
+    Event::AboutToWait => {
+      window.request_redraw();
+    }
     _ => {}
-  });
+  })?;
+  Ok(())
 }

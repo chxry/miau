@@ -71,15 +71,13 @@ impl World {
         //   std::fs::File::create("test").unwrap(),
         //   DefaultOptions::new(),
         // );
-        let mut json_se = serde_json::Serializer::pretty(std::fs::File::create("test").unwrap());
-        ser(
-          // Ref::leak(v[0].1.borrow()), // dontleak
-          v[0].1.borrow(),
-          &mut <dyn Serializer>::erase(&mut json_se),
-        );
 
-        // let json_de = serde_json::Deserializer::from_reader(std::fs::File::open("test").unwrap());
-        // de()
+        let name = &format!("{}", unsafe { mem::transmute::<_, u64>(t) });
+        let mut json_se = serde_json::Serializer::pretty(std::fs::File::create(name).unwrap());
+        ser(v[0].1.borrow(), &mut <dyn Serializer>::erase(&mut json_se));
+
+        let mut json_de = serde_json::Deserializer::from_reader(std::fs::File::open(name).unwrap());
+        de(&mut <dyn Deserializer>::erase(&mut json_de));
       }
     }
   }
@@ -152,7 +150,7 @@ pub use macros::component;
 pub static mut COMPONENTS: HashMap<
   TypeId,
   (
-    for<'a> fn(&'a dyn Any, &'a mut dyn Serializer), //remove the silly for
-    fn(&dyn Deserializer) -> Box<dyn Any>,
+    fn(Ref<dyn Any>, &mut dyn Serializer),
+    fn(&mut dyn Deserializer) -> Box<dyn Any>,
   ),
 > = HashMap::with_hasher(unsafe { mem::transmute([0u64; 2]) });

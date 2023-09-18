@@ -51,8 +51,8 @@ impl Transform {
   }
 }
 
-// #[component]
-// #[derive(Serialize, Deserialize)]
+#[component]
+#[derive(Serialize, Deserialize)]
 pub struct Model {
   pub mesh: Handle<Mesh>,
   pub tex: Handle<Texture>,

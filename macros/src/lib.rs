@@ -16,12 +16,12 @@ pub fn component(_: TokenStream, input: TokenStream) -> TokenStream {
     static #c: extern fn() = {
       use ::std::any::{Any,TypeId};
 
-      fn ser(c: &dyn Any, se: &mut dyn ::erased_serde::Serializer) {
-        erased_serde::serialize(unsafe { c.downcast_ref_unchecked::<#ident>() },se).unwrap();
+      fn ser(c: std::cell::Ref<dyn Any>, se: &mut dyn ::erased_serde::Serializer) {
+        ::erased_serde::serialize(unsafe { c.downcast_ref_unchecked::<#ident>() },se).unwrap();
       }
 
-      fn de(de: &dyn ::erased_serde::Deserializer) -> Box<dyn Any> {
-        Box::new(())
+      fn de(de: &mut dyn ::erased_serde::Deserializer) -> Box<dyn Any> {
+        Box::new(::erased_serde::deserialize::<#ident>(de).unwrap())
       }
 
       extern fn i() {

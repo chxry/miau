@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::any::{Any, TypeId, type_name};
 use std::rc::Rc;
 use std::ops::Deref;
-use serde::{Serialize, Deserialize, Deserializer, de::Error};
+use serde::{Serialize, Serializer, Deserialize, Deserializer, de::Error};
 use crate::Result;
 
 static mut ASSETS: MaybeUninit<Assets> = MaybeUninit::uninit();
@@ -55,6 +55,7 @@ impl Assets {
 }
 
 #[derive(Serialize)]
+#[serde(transparent)]
 pub struct Handle<T: ?Sized> {
   path: String,
   #[serde(skip)]
@@ -89,8 +90,8 @@ impl<T> Deref for Handle<T> {
 
 impl<'de, T: Any> Deserialize<'de> for Handle<T> {
   fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
-    let path = Deserialize::deserialize(deserializer)?;
-    assets().load(path).map_err(|e| {
+    let path: String = Deserialize::deserialize(deserializer)?;
+    assets().load(&path).map_err(|e| {
       D::Error::custom(format!(
         "could not load '{}' from '{} - {}'",
         type_name::<T>(),
