@@ -25,31 +25,25 @@ fn main() -> Result {
   let assets = assets::init();
   let renderer = gfx::init(&window);
   let world = World::new();
-  world.spawn().insert(Transform::new()).insert(Model {
-    mesh: assets.load("garfield.obj")?,
-    tex: assets.load("garfield.png")?,
-  });
-  world
-    .spawn()
-    .insert(
-      Transform::new()
-        .pos(Vec3::new(-4.0, 0.0, 2.0))
-        .scale(Vec3::splat(0.5)),
-    )
-    .insert(Model {
-      mesh: assets.load("garfield.obj")?,
-      tex: assets.load("garfield.png")?,
-    });
 
+  // world.spawn().insert(Transform::new()).insert(Model {
+  //   mesh: assets.load("garfield.obj")?,
+  //   tex: assets.load("garfield.png")?,
+  // });
+  // world
+  //   .spawn()
+  //   .insert(
+  //     Transform::new()
+  //       .pos(Vec3::new(-4.0, 0.0, 2.0))
+  //       .scale(Vec3::splat(0.5)),
+  //   )
+  //   .insert(Model {
+  //     mesh: assets.load("garfield.obj")?,
+  //     tex: assets.load("garfield.png")?,
+  //   });
   // world.save();
+
   world.load();
-
-  // std::fs::write(
-  //   "test",
-  //   bincode::serialize(&assets.load::<gfx::Mesh>("garfield.obj")?)?,
-  // )?;
-
-  // let h: assets::Handle<gfx::Mesh> = bincode::deserialize(&std::fs::read("test")?)?;
 
   event_loop.run(move |event, elwt| match event {
     Event::WindowEvent { event, .. } => match event {

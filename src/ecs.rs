@@ -8,8 +8,6 @@ use serde::ser::SerializeMap;
 use serde::de::{Visitor, MapAccess};
 use erased_serde::Deserializer as ErasedDeserializer;
 
-type Storage = HashMap<TypeId, Vec<(u64, Box<RefCell<dyn Any>>)>>;
-
 pub struct World {
   components: UnsafeCell<Storage>,
 }
@@ -17,7 +15,7 @@ pub struct World {
 impl World {
   pub fn new() -> Self {
     Self {
-      components: UnsafeCell::new(HashMap::new()),
+      components: UnsafeCell::new(Storage::new()),
     }
   }
 
@@ -37,13 +35,13 @@ impl World {
   }
 
   pub fn get<T: Any>(&self) -> Vec<(Entity, Ref<T>)> {
-    match self.components().get(&TypeId::of::<T>()) {
+    match self.components().0.get(&TypeId::of::<T>()) {
       Some(v) => v
         .iter()
         .map(|c| {
           (
             Entity::new(self, c.0),
-            Ref::map(c.1.borrow(), unsafe { |r| r.downcast_ref_unchecked() }),
+            Ref::map(c.1 .0.borrow(), unsafe { |r| r.downcast_ref_unchecked() }),
           )
         })
         .collect(),
@@ -52,13 +50,15 @@ impl World {
   }
 
   pub fn get_mut<T: Any>(&self) -> Vec<(Entity, RefMut<T>)> {
-    match self.components().get(&TypeId::of::<T>()) {
+    match self.components().0.get(&TypeId::of::<T>()) {
       Some(v) => v
         .iter()
         .map(|c| {
           (
             Entity::new(self, c.0),
-            RefMut::map(c.1.borrow_mut(), unsafe { |r| r.downcast_mut_unchecked() }),
+            RefMut::map(c.1 .0.borrow_mut(), unsafe {
+              |r| r.downcast_mut_unchecked()
+            }),
           )
         })
         .collect(),
@@ -67,22 +67,11 @@ impl World {
   }
 
   pub fn save(&self) {
-    let mut n = Bleh(HashMap::new());
-    for (t, v) in self.components() {
-      if unsafe { COMPONENTS.get(t).is_some() } {
-        n.0.insert(
-          *t,
-          v.iter() //                         this isnt real
-            .map(|c| (c.0, SerdeComponent(unsafe { mem::transmute_copy(&c.1) })))
-            .collect(),
-        );
-      }
-    }
-    serde_json::to_writer(std::fs::File::create("test").unwrap(), &n).unwrap();
+    serde_json::to_writer(std::fs::File::create("test").unwrap(), &self.components()).unwrap();
   }
 
   pub fn load(&self) {
-    let n: Bleh = serde_json::from_reader(std::fs::File::open("test").unwrap()).unwrap();
+    *self.components_mut() = serde_json::from_reader(std::fs::File::open("test").unwrap()).unwrap();
   }
 }
 
@@ -100,9 +89,10 @@ impl<'w> Entity<'w> {
     self
       .world
       .components_mut()
+      .0
       .entry(TypeId::of::<T>())
       .or_insert(vec![])
-      .push((self.id, Box::new(RefCell::new(t))));
+      .push((self.id, Component::new(t)));
     self
   }
 
@@ -159,37 +149,54 @@ pub static mut COMPONENTS: HashMap<
 > = HashMap::with_hasher(unsafe { mem::transmute([0u64; 2]) });
 static mut SILLY: TypeId = TypeId::of::<()>();
 
-// maybe store all components in this thing
-struct SerdeComponent(Box<RefCell<dyn Any>>);
+struct Component(Box<RefCell<dyn Any>>);
 
-impl Serialize for SerdeComponent {
+impl Component {
+  fn new<T: Any>(t: T) -> Self {
+    Self(Box::new(RefCell::new(t)))
+  }
+}
+
+impl Serialize for Component {
   fn serialize<S: Serializer>(&self, se: S) -> Result<S::Ok, S::Error> {
-    let ser = unsafe { COMPONENTS.get(&SILLY).unwrap() }.0;
-    erased_serde::serialize(ser(self.0.borrow()).deref(), se)
+    match unsafe { COMPONENTS.get(&SILLY) } {
+      Some((ser, _)) => erased_serde::serialize(ser(self.0.borrow()).deref(), se),
+      None => se.serialize_unit(),
+    }
   }
 }
 
-impl<'de> Deserialize<'de> for SerdeComponent {
+impl<'de> Deserialize<'de> for Component {
   fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-    let de = unsafe { COMPONENTS.get(&SILLY).unwrap() }.1;
-    Ok(Self(de(&mut <dyn ErasedDeserializer>::erase(d))))
+    match unsafe { COMPONENTS.get(&SILLY) } {
+      Some((_, de)) => Ok(Self(de(&mut <dyn ErasedDeserializer>::erase(d)))),
+      None => panic!("unknown component"),
+    }
   }
 }
 
-struct Bleh(HashMap<TypeId, Vec<(u64, SerdeComponent)>>);
+struct Storage(HashMap<TypeId, Vec<(u64, Component)>>);
 
-impl Serialize for Bleh {
+impl Storage {
+  fn new() -> Self {
+    Self(HashMap::new())
+  }
+}
+
+impl Serialize for Storage {
   fn serialize<S: Serializer>(&self, se: S) -> Result<S::Ok, S::Error> {
     let mut map = se.serialize_map(Some(self.0.len()))?;
     for (t, v) in &self.0 {
-      unsafe { SILLY = *t };
-      map.serialize_entry(&unsafe { mem::transmute::<_, u64>(*t) }, v)?;
+      unsafe {
+        SILLY = *t;
+        map.serialize_entry(&mem::transmute::<_, u64>(*t), v)?;
+      }
     }
     map.end()
   }
 }
 
-impl<'de> Deserialize<'de> for Bleh {
+impl<'de> Deserialize<'de> for Storage {
   fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
     de.deserialize_map(MapVisitor)
   }
@@ -198,7 +205,7 @@ impl<'de> Deserialize<'de> for Bleh {
 struct MapVisitor;
 
 impl<'de> Visitor<'de> for MapVisitor {
-  type Value = Bleh;
+  type Value = Storage;
 
   fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
     write!(f, "meow")
@@ -207,9 +214,11 @@ impl<'de> Visitor<'de> for MapVisitor {
   fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<Self::Value, A::Error> {
     let mut map = HashMap::with_capacity(a.size_hint().unwrap_or_default());
     while let Ok(Some(t)) = a.next_key() {
-      unsafe { SILLY = mem::transmute::<u64, _>(t) };
-      map.insert(unsafe { SILLY }, a.next_value().unwrap());
+      unsafe {
+        SILLY = mem::transmute::<u64, _>(t);
+        map.insert(SILLY, a.next_value().unwrap());
+      }
     }
-    Ok(Bleh(map))
+    Ok(Storage(map))
   }
 }
