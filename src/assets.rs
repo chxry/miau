@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::any::{Any, TypeId, type_name};
 use std::rc::Rc;
 use std::ops::Deref;
-use serde::{Serialize, Serializer, Deserialize, Deserializer, de::Error};
+use serde::{Serialize, Deserialize, Deserializer, de::Error};
 use crate::Result;
 
 static mut ASSETS: MaybeUninit<Assets> = MaybeUninit::uninit();

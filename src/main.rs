@@ -1,4 +1,4 @@
-#![feature(downcast_unchecked, const_collections_with_hasher)]
+#![feature(downcast_unchecked, const_collections_with_hasher, const_type_id)]
 mod gfx;
 mod ecs;
 mod assets;
@@ -41,7 +41,8 @@ fn main() -> Result {
       tex: assets.load("garfield.png")?,
     });
 
-  world.save();
+  // world.save();
+  world.load();
 
   // std::fs::write(
   //   "test",
@@ -57,9 +58,7 @@ fn main() -> Result {
       WindowEvent::RedrawRequested => renderer.frame(&world),
       _ => {}
     },
-    Event::AboutToWait => {
-      window.request_redraw();
-    }
+    Event::AboutToWait => window.request_redraw(),
     _ => {}
   })?;
   Ok(())

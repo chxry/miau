@@ -14,14 +14,15 @@ pub fn component(_: TokenStream, input: TokenStream) -> TokenStream {
     #[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
     #[cfg_attr(target_os = "windows", link_section = ".CRT$XCU")]
     static #c: extern fn() = {
-      use ::std::any::{Any,TypeId};
+      use ::std::any::{Any, TypeId};
+      use ::std::cell::{RefCell, Ref};
 
-      fn ser(c: std::cell::Ref<dyn Any>, se: &mut dyn ::erased_serde::Serializer) {
-        ::erased_serde::serialize(unsafe { c.downcast_ref_unchecked::<#ident>() },se).unwrap();
+      fn ser(c: Ref<dyn Any>) -> Ref<dyn ::erased_serde::Serialize> {
+        Ref::map(c,|c| unsafe {c.downcast_ref_unchecked::<#ident>()})
       }
 
-      fn de(de: &mut dyn ::erased_serde::Deserializer) -> Box<dyn Any> {
-        Box::new(::erased_serde::deserialize::<#ident>(de).unwrap())
+      fn de(de: &mut dyn ::erased_serde::Deserializer) -> Box<RefCell<dyn Any>> {
+        Box::new(RefCell::new(::erased_serde::deserialize::<#ident>(de).unwrap()))
       }
 
       extern fn i() {
