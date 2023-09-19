@@ -2,11 +2,15 @@ use std::{fmt, mem};
 use std::any::{Any, TypeId};
 use std::cell::{UnsafeCell, RefCell, Ref, RefMut};
 use std::ops::Deref;
+use std::fs::File;
 use std::collections::HashMap;
 use serde::{Serialize, Serializer, Deserialize, Deserializer};
 use serde::ser::SerializeMap;
 use serde::de::{Visitor, MapAccess};
 use erased_serde::Deserializer as ErasedDeserializer;
+use crate::Result;
+
+pub use macros::component;
 
 pub struct World {
   components: UnsafeCell<Storage>,
@@ -66,12 +70,16 @@ impl World {
     }
   }
 
-  pub fn save(&self) {
-    serde_json::to_writer(std::fs::File::create("test").unwrap(), &self.components()).unwrap();
+  pub fn save(&self) -> Result {
+    serde_json::to_writer(File::create("test")?, self.components())?;
+    // bincode::serialize_into(File::create("test")?, self.components())?;
+    Ok(())
   }
 
-  pub fn load(&self) {
-    *self.components_mut() = serde_json::from_reader(std::fs::File::open("test").unwrap()).unwrap();
+  pub fn load(&self) -> Result {
+    *self.components_mut() = serde_json::from_reader(File::open("test")?)?;
+    // *self.components_mut() = bincode::deserialize_from(File::open("test")?)?;
+    Ok(())
   }
 }
 
@@ -137,8 +145,6 @@ impl fmt::Debug for Entity<'_> {
   }
 }
 
-pub use macros::component;
-
 #[doc(hidden)]
 pub static mut COMPONENTS: HashMap<
   TypeId,
@@ -159,19 +165,15 @@ impl Component {
 
 impl Serialize for Component {
   fn serialize<S: Serializer>(&self, se: S) -> Result<S::Ok, S::Error> {
-    match unsafe { COMPONENTS.get(&SILLY) } {
-      Some((ser, _)) => erased_serde::serialize(ser(self.0.borrow()).deref(), se),
-      None => se.serialize_unit(),
-    }
+    let ser = unsafe { COMPONENTS.get(&SILLY).unwrap().0 };
+    erased_serde::serialize(ser(self.0.borrow()).deref(), se)
   }
 }
 
 impl<'de> Deserialize<'de> for Component {
   fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-    match unsafe { COMPONENTS.get(&SILLY) } {
-      Some((_, de)) => Ok(Self(de(&mut <dyn ErasedDeserializer>::erase(d)))),
-      None => panic!("unknown component"),
-    }
+    let de = unsafe { COMPONENTS.get(&SILLY).unwrap().1 };
+    Ok(Self(de(&mut <dyn ErasedDeserializer>::erase(d))))
   }
 }
 
@@ -188,8 +190,10 @@ impl Serialize for Storage {
     let mut map = se.serialize_map(Some(self.0.len()))?;
     for (t, v) in &self.0 {
       unsafe {
-        SILLY = *t;
-        map.serialize_entry(&mem::transmute::<_, u64>(*t), v)?;
+        if COMPONENTS.get(t).is_some() {
+          SILLY = *t;
+          map.serialize_entry(&mem::transmute::<_, u64>(*t), v)?;
+        }
       }
     }
     map.end()

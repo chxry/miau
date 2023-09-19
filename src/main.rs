@@ -12,7 +12,7 @@ use glam::Vec3;
 use crate::ecs::World;
 use crate::scene::{Transform, Model};
 
-pub type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub type Result<T = (), E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
 fn main() -> Result {
   env_logger::builder()
@@ -26,24 +26,24 @@ fn main() -> Result {
   let renderer = gfx::init(&window);
   let world = World::new();
 
-  // world.spawn().insert(Transform::new()).insert(Model {
-  //   mesh: assets.load("garfield.obj")?,
-  //   tex: assets.load("garfield.png")?,
-  // });
-  // world
-  //   .spawn()
-  //   .insert(
-  //     Transform::new()
-  //       .pos(Vec3::new(-4.0, 0.0, 2.0))
-  //       .scale(Vec3::splat(0.5)),
-  //   )
-  //   .insert(Model {
-  //     mesh: assets.load("garfield.obj")?,
-  //     tex: assets.load("garfield.png")?,
-  //   });
-  // world.save();
+  world.spawn().insert(Transform::new()).insert(Model {
+    mesh: assets.load("garfield.obj")?,
+    tex: assets.load("garfield.png")?,
+  });
+  world
+    .spawn()
+    .insert(
+      Transform::new()
+        .pos(Vec3::new(-4.0, 0.0, 2.0))
+        .scale(Vec3::splat(0.5)),
+    )
+    .insert(Model {
+      mesh: assets.load("garfield.obj")?,
+      tex: assets.load("garfield.png")?,
+    });
+  world.save()?;
 
-  world.load();
+  world.load()?;
 
   event_loop.run(move |event, elwt| match event {
     Event::WindowEvent { event, .. } => match event {

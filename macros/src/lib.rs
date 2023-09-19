@@ -18,7 +18,7 @@ pub fn component(_: TokenStream, input: TokenStream) -> TokenStream {
       use ::std::cell::{RefCell, Ref};
 
       fn ser(c: Ref<dyn Any>) -> Ref<dyn ::erased_serde::Serialize> {
-        Ref::map(c,|c| unsafe {c.downcast_ref_unchecked::<#ident>()})
+        Ref::map(c, |c| unsafe {c.downcast_ref_unchecked::<#ident>()})
       }
 
       fn de(de: &mut dyn ::erased_serde::Deserializer) -> Box<RefCell<dyn Any>> {

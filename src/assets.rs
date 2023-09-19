@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::any::{Any, TypeId, type_name};
 use std::rc::Rc;
 use std::ops::Deref;
+use vach::archive::Archive;
 use serde::{Serialize, Deserialize, Deserializer, de::Error};
 use crate::Result;
 
@@ -89,7 +90,7 @@ impl<T> Deref for Handle<T> {
 }
 
 impl<'de, T: Any> Deserialize<'de> for Handle<T> {
-  fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+  fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
     let path: String = Deserialize::deserialize(deserializer)?;
     assets().load(&path).map_err(|e| {
       D::Error::custom(format!(
