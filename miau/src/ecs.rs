@@ -12,14 +12,26 @@ use crate::Result;
 
 pub use macros::component;
 
+pub mod stage {
+  pub const INIT: u64 = 0;
+  pub const START: u64 = 1;
+  pub const DRAW: u64 = 2;
+}
+
+pub trait System = Fn(&World) -> Result;
+
 pub struct World {
   components: UnsafeCell<Storage>,
+  resources: UnsafeCell<HashMap<TypeId, Box<dyn Any>>>,
+  systems: UnsafeCell<HashMap<u64, Vec<Box<dyn System>>>>,
 }
 
 impl World {
   pub fn new() -> Self {
     Self {
       components: UnsafeCell::new(Storage::new()),
+      resources: UnsafeCell::new(HashMap::new()),
+      systems: UnsafeCell::new(HashMap::new()),
     }
   }
 
@@ -80,6 +92,43 @@ impl World {
     *self.components_mut() = serde_json::from_reader(File::open("test")?)?;
     // *self.components_mut() = bincode::deserialize_from(File::open("test")?)?;
     Ok(())
+  }
+
+  pub fn add_resource<T: Any>(&self, resource: T) {
+    unsafe { &mut *self.resources.get() }.insert(TypeId::of::<T>(), Box::new(resource));
+  }
+
+  pub fn get_resource<T: Any>(&self) -> Option<&T> {
+    unsafe { &*self.resources.get() }
+      .get(&TypeId::of::<T>())
+      .map(|r| unsafe { r.downcast_ref_unchecked() })
+  }
+
+  pub fn get_resource_mut<T: Any>(&self) -> Option<&mut T> {
+    unsafe { &mut *self.resources.get() }
+      .get_mut(&TypeId::of::<T>())
+      .map(|r| unsafe { r.downcast_mut_unchecked() })
+  }
+
+  pub fn take_resource<T: Any>(&self) -> Option<T> {
+    unsafe { &mut *self.resources.get() }
+      .remove(&TypeId::of::<T>())
+      .map(|r| *unsafe { r.downcast_unchecked() })
+  }
+
+  pub fn add_system<S: System + 'static>(&self, stage: u64, s: S) {
+    unsafe { &mut *self.systems.get() }
+      .entry(stage)
+      .or_insert(vec![])
+      .push(Box::new(s));
+  }
+
+  pub fn run_system(&self, stage: u64) {
+    if let Some(vec) = unsafe { &*self.systems.get() }.get(&stage) {
+      for sys in vec {
+        sys(self).unwrap();
+      }
+    }
   }
 }
 

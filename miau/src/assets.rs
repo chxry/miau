@@ -1,51 +1,31 @@
-use std::fs;
-use std::mem::MaybeUninit;
+use std::mem;
+use std::fs::File;
 use std::collections::HashMap;
 use std::any::{Any, TypeId, type_name};
 use std::rc::Rc;
 use std::ops::Deref;
 use vach::archive::Archive;
 use serde::{Serialize, Deserialize, Deserializer, de::Error};
-use crate::Result;
+use crate::{Result, world};
 
-static mut ASSETS: MaybeUninit<Assets> = MaybeUninit::uninit();
-
-pub fn init() -> &'static mut Assets {
-  let _ = unsafe { ASSETS.write(Assets::new()) };
-  assets()
-}
-
-#[inline(always)]
-pub fn assets() -> &'static mut Assets {
-  unsafe { ASSETS.assume_init_mut() }
-}
+pub use macros::asset;
 
 pub struct Assets {
-  loaders: HashMap<TypeId, AssetLoader>,
+  archive: Archive<File>,
 }
 
 impl Assets {
-  fn new() -> Self {
-    Self {
-      loaders: HashMap::new(),
-    }
+  pub fn new() -> Result<Self> {
+    Ok(Self {
+      archive: Archive::new(File::open("assets.vach")?)?,
+    })
   }
 
-  pub fn register_loader<T: Any>(&mut self, f: fn(&[u8]) -> Result<T>) {
-    self.loaders.insert(
-      TypeId::of::<T>(),
-      AssetLoader {
-        loader: Box::new(move |d| f(d).map(|a| Rc::new(a) as _)),
-        assets: vec![],
-      },
-    );
-  }
-
-  pub fn load<T: Any>(&mut self, path: &str) -> Result<Handle<T>> {
-    match self.loaders.get_mut(&TypeId::of::<T>()) {
+  pub fn load<T: Any>(&self, path: &str) -> Result<Handle<T>> {
+    match unsafe { ASSET_LOADERS.get_mut(&TypeId::of::<T>()) } {
       Some(loader) => match loader.assets.iter().find(|h| h.path == path) {
         Some(asset) => Ok(asset.downcast()),
-        None => (loader.loader)(&fs::read(path)?).map(|a| {
+        None => (loader.loader)(&self.archive.fetch(format!("assets/{}", path))?.data).map(|a| {
           loader.assets.push(Handle::new(path, a.clone()));
           Handle::new(path, unsafe { a.downcast_unchecked() })
         }),
@@ -53,7 +33,15 @@ impl Assets {
       None => Err("todo".into()),
     }
   }
+
+  fn get() -> &'static Self {
+    world().get_resource().unwrap()
+  }
 }
+
+#[doc(hidden)]
+pub static mut ASSET_LOADERS: HashMap<TypeId, AssetLoader> =
+  HashMap::with_hasher(unsafe { mem::transmute([0u64; 2]) });
 
 #[derive(Serialize)]
 #[serde(transparent)]
@@ -92,7 +80,7 @@ impl<T> Deref for Handle<T> {
 impl<'de, T: Any> Deserialize<'de> for Handle<T> {
   fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
     let path: String = Deserialize::deserialize(deserializer)?;
-    assets().load(&path).map_err(|e| {
+    Assets::get().load(&path).map_err(|e| {
       D::Error::custom(format!(
         "could not load '{}' from '{} - {}'",
         type_name::<T>(),
@@ -103,7 +91,7 @@ impl<'de, T: Any> Deserialize<'de> for Handle<T> {
   }
 }
 
-struct AssetLoader {
-  loader: Box<dyn Fn(&[u8]) -> Result<Rc<dyn Any>>>,
-  assets: Vec<Handle<dyn Any>>,
+pub struct AssetLoader {
+  pub loader: fn(&[u8]) -> Result<Rc<dyn Any>>,
+  pub assets: Vec<Handle<dyn Any>>,
 }

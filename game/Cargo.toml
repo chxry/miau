@@ -1,0 +1,9 @@
+[package]
+name = "game"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+miau = { path = "../miau" }
+log = "0.4"
+env_logger = "0.10"
