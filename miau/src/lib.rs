@@ -44,15 +44,14 @@ impl Engine {
 fn init(world: &World) -> Result {
   let event_loop = EventLoop::new()?;
   let window = WindowBuilder::new().build(&event_loop)?;
-  let renderer = pollster::block_on(Renderer::new(&window))?;
   let assets = Assets::new()?;
-
-  world.add_resource(renderer);
   world.add_resource(assets);
+  pollster::block_on(Renderer::init(&window, world))?; // do this for other engine resources
+
   world.add_resource(event_loop);
   world.add_resource(window);
   world.add_system(stage::START, start);
-  world.add_system(stage::DRAW, draw);
+  world.add_system(stage::UPDATE, update);
 
   Ok(())
 }
@@ -63,7 +62,7 @@ fn start(world: &World) -> Result {
     .unwrap()
     .run(move |event, elwt| match event {
       Event::WindowEvent { event, .. } => match event {
-        WindowEvent::RedrawRequested => world.run_system(stage::DRAW),
+        WindowEvent::RedrawRequested => world.run_system(stage::UPDATE),
         WindowEvent::Resized(size) => world.get_resource_mut::<Renderer>().unwrap().resize(size),
         WindowEvent::CloseRequested => elwt.exit(),
         _ => {}
@@ -74,7 +73,7 @@ fn start(world: &World) -> Result {
   Ok(())
 }
 
-fn draw(world: &World) -> Result {
+fn update(world: &World) -> Result {
   world.get_resource_mut::<Renderer>().unwrap().frame(world);
   Ok(())
 }

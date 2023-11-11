@@ -56,4 +56,5 @@ impl Transform {
 pub struct Model {
   pub mesh: Handle<Mesh>,
   pub tex: Handle<Texture>,
+  pub instances: u32,
 }

@@ -8,6 +8,7 @@ use serde::{Serialize, Serializer, Deserialize, Deserializer};
 use serde::ser::SerializeMap;
 use serde::de::{Visitor, MapAccess};
 use erased_serde::Deserializer as ErasedDeserializer;
+use log::error;
 use crate::Result;
 
 pub use macros::component;
@@ -15,7 +16,8 @@ pub use macros::component;
 pub mod stage {
   pub const INIT: u64 = 0;
   pub const START: u64 = 1;
-  pub const DRAW: u64 = 2;
+  pub const UPDATE: u64 = 2;
+  pub const DRAW: u64 = 3;
 }
 
 pub trait System = Fn(&World) -> Result;
@@ -23,7 +25,7 @@ pub trait System = Fn(&World) -> Result;
 pub struct World {
   components: UnsafeCell<Storage>,
   resources: UnsafeCell<HashMap<TypeId, Box<dyn Any>>>,
-  systems: UnsafeCell<HashMap<u64, Vec<Box<dyn System>>>>,
+  systems: UnsafeCell<HashMap<u64, Vec<(&'static str, Box<dyn System>)>>>,
 }
 
 impl World {
@@ -120,13 +122,15 @@ impl World {
     unsafe { &mut *self.systems.get() }
       .entry(stage)
       .or_insert(vec![])
-      .push(Box::new(s));
+      .push((std::any::type_name::<S>(), Box::new(s)));
   }
 
   pub fn run_system(&self, stage: u64) {
     if let Some(vec) = unsafe { &*self.systems.get() }.get(&stage) {
-      for sys in vec {
-        sys(self).unwrap();
+      for (name, sys) in vec {
+        if let Err(e) = sys(self) {
+          error!("Error in system '{}': {}", name, e);
+        }
       }
     }
   }
@@ -202,7 +206,7 @@ pub static mut COMPONENTS: HashMap<
     fn(&mut dyn ErasedDeserializer) -> Box<RefCell<dyn Any>>,
   ),
 > = HashMap::with_hasher(unsafe { mem::transmute([0u64; 2]) });
-static mut SILLY: TypeId = TypeId::of::<()>();
+static mut CURRENT: TypeId = TypeId::of::<()>();
 
 struct Component(Box<RefCell<dyn Any>>);
 
@@ -214,14 +218,14 @@ impl Component {
 
 impl Serialize for Component {
   fn serialize<S: Serializer>(&self, se: S) -> Result<S::Ok, S::Error> {
-    let ser = unsafe { COMPONENTS.get(&SILLY).unwrap().0 };
+    let ser = unsafe { COMPONENTS.get(&CURRENT).unwrap().0 };
     erased_serde::serialize(ser(self.0.borrow()).deref(), se)
   }
 }
 
 impl<'de> Deserialize<'de> for Component {
   fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-    let de = unsafe { COMPONENTS.get(&SILLY).unwrap().1 };
+    let de = unsafe { COMPONENTS.get(&CURRENT).unwrap().1 };
     Ok(Self(de(&mut <dyn ErasedDeserializer>::erase(d))))
   }
 }
@@ -240,7 +244,7 @@ impl Serialize for Storage {
     for (t, v) in &self.0 {
       unsafe {
         if COMPONENTS.get(t).is_some() {
-          SILLY = *t;
+          CURRENT = *t;
           map.serialize_entry(&mem::transmute::<_, u64>(*t), v)?;
         }
       }
@@ -261,15 +265,15 @@ impl<'de> Visitor<'de> for MapVisitor {
   type Value = Storage;
 
   fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "meow")
+    write!(f, "{}", std::any::type_name::<Storage>())
   }
 
   fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<Self::Value, A::Error> {
     let mut map = HashMap::with_capacity(a.size_hint().unwrap_or_default());
     while let Ok(Some(t)) = a.next_key() {
       unsafe {
-        SILLY = mem::transmute::<u64, _>(t);
-        map.insert(SILLY, a.next_value().unwrap());
+        CURRENT = mem::transmute::<u64, _>(t);
+        map.insert(CURRENT, a.next_value().unwrap());
       }
     }
     Ok(Storage(map))

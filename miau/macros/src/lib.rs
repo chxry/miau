@@ -57,7 +57,7 @@ pub fn asset(args: TokenStream, input: TokenStream) -> TokenStream {
         #loader(data).map(|a| ::std::rc::Rc::new(a) as _)
       }
 
-      extern fn i() {
+      extern fn i () {
         unsafe { crate::assets::ASSET_LOADERS.insert(::std::any::TypeId::of::<#ident>(), crate::assets::AssetLoader {loader, assets: vec![]}); }
       }
       i
