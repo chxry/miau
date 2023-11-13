@@ -1,8 +1,8 @@
 use glam::{Vec3, Quat, EulerRot, Mat4};
 use serde::{Serialize, Deserialize};
-use crate::assets::Handle;
-use crate::gfx::{Mesh, Texture};
 use crate::ecs::component;
+
+pub use crate::gfx::standard::Model;
 
 #[component]
 #[derive(Serialize, Deserialize)]
@@ -49,12 +49,4 @@ impl Transform {
   pub fn as_mat4(&self) -> Mat4 {
     Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.position)
   }
-}
-
-#[component]
-#[derive(Serialize, Deserialize)]
-pub struct Model {
-  pub mesh: Handle<Mesh>,
-  pub tex: Handle<Texture>,
-  pub instances: u32,
 }

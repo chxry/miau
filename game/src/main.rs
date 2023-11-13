@@ -22,7 +22,6 @@ fn start(world: &World) -> Result {
   world.spawn().insert(Transform::new()).insert(Model {
     mesh: assets.load("assets/garfield.obj")?,
     tex: assets.load("assets/garfield.png")?,
-    instances: 1,
   });
 
   world
@@ -35,7 +34,6 @@ fn start(world: &World) -> Result {
     .insert(Model {
       mesh: assets.load("assets/garfield.obj")?,
       tex: assets.load("assets/garfield.png")?,
-      instances: 1,
     });
   world.save()?;
 
