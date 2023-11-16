@@ -1,5 +1,5 @@
 [package]
-name = "miau_shared"
+name = "game_shared"
 version = "0.1.0"
 edition = "2021"
 

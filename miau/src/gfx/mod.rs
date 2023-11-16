@@ -4,29 +4,36 @@ use std::{slice, mem};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 use winit::dpi::PhysicalSize;
-use glam::Vec2;
+use glam::{Vec2, Vec3, Mat4};
 use obj::{Obj, TexturedVertex};
 use standard::StandardPass;
+use serde::{Serialize, Deserialize, Serializer, Deserializer};
 use crate::ecs::{World, stage};
 use crate::assets::asset;
 use crate::{Result, world};
 
-pub use shared::{Vertex, SceneConst, ObjConst};
+pub use miau_shared::*;
 
-const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
-const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-const SAMPLES: u32 = 4;
+// move to renderer
+pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
+pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+pub const SAMPLES: u32 = 4;
 
 pub struct Renderer {
-  surface: wgpu::Surface,
-  device: wgpu::Device,
-  queue: wgpu::Queue,
-  textures: Box<Textures>,
+  pub surface: wgpu::Surface,
+  pub device: wgpu::Device,
+  pub queue: wgpu::Queue,
+  pub textures: Box<Textures>,
+  pub scene_layout: wgpu::BindGroupLayout,
+  pub scene_buf: wgpu::Buffer,
+  pub scene_bind_group: wgpu::BindGroup,
+  pub tex_layout: wgpu::BindGroupLayout,
 }
 
 impl Renderer {
-  pub async fn init(window: &Window, world: &World) -> Result {
+  pub async fn init(world: &World) -> Result {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
+    let window = world.get_resource::<Window>().unwrap();
     let surface = unsafe { instance.create_surface(&window)? };
     let adapter = instance
       .request_adapter(&wgpu::RequestAdapterOptions {
@@ -47,12 +54,67 @@ impl Renderer {
         None,
       )
       .await?;
+
     let textures = Box::new(Textures::new(&device, window.inner_size()));
+
+    let scene_buf = device.create_buffer(&wgpu::BufferDescriptor {
+      size: mem::size_of::<SceneConst>() as _,
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      mapped_at_creation: false,
+      label: None,
+    });
+    let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+      entries: &[wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::VERTEX,
+        ty: wgpu::BindingType::Buffer {
+          ty: wgpu::BufferBindingType::Uniform,
+          has_dynamic_offset: false,
+          min_binding_size: None,
+        },
+        count: None,
+      }],
+      label: None,
+    });
+    let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+      layout: &scene_layout,
+      entries: &[wgpu::BindGroupEntry {
+        binding: 0,
+        resource: scene_buf.as_entire_binding(),
+      }],
+      label: None,
+    });
+    let tex_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+      entries: &[
+        wgpu::BindGroupLayoutEntry {
+          binding: 0,
+          visibility: wgpu::ShaderStages::FRAGMENT,
+          ty: wgpu::BindingType::Texture {
+            multisampled: false,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+          },
+          count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+          binding: 1,
+          visibility: wgpu::ShaderStages::FRAGMENT,
+          ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+          count: None,
+        },
+      ],
+      label: None,
+    });
+
     world.add_resource(Self {
       surface,
       device,
       queue,
       textures,
+      scene_layout,
+      scene_buf,
+      scene_bind_group,
+      tex_layout,
     });
 
     world.add_resource(StandardPass::new(world)?);
@@ -85,11 +147,21 @@ impl Renderer {
     let surface_view = surface
       .texture
       .create_view(&wgpu::TextureViewDescriptor::default());
+    self.queue.write_buffer(
+      &self.scene_buf,
+      0,
+      cast(&SceneConst {
+        cam: Mat4::perspective_infinite_lh(
+          1.4,
+          surface.texture.width() as f32 / surface.texture.height() as f32,
+          0.01,
+        ) * Mat4::look_at_lh(Vec3::splat(5.0), Vec3::ZERO, Vec3::Y),
+      }),
+    );
 
     world.add_resource(Frame {
       surface,
       surface_view,
-      textures: Box::leak(unsafe { mem::transmute_copy::<_, Box<Textures>>(&self.textures) }),
       encoder: Box::leak(encoder),
     });
     world.run_system(stage::DRAW);
@@ -106,9 +178,9 @@ impl Renderer {
   }
 }
 
-struct Textures {
-  fb: wgpu::TextureView,
-  depth: wgpu::TextureView,
+pub struct Textures {
+  pub fb: wgpu::TextureView,
+  pub depth: wgpu::TextureView,
 }
 
 impl Textures {
@@ -142,18 +214,17 @@ impl Textures {
 }
 
 pub struct Frame<'a> {
-  surface: wgpu::SurfaceTexture,
-  surface_view: wgpu::TextureView,
-  textures: &'a Textures,
-  encoder: &'a mut wgpu::CommandEncoder,
+  pub surface: wgpu::SurfaceTexture,
+  pub surface_view: wgpu::TextureView,
+  pub encoder: &'a mut wgpu::CommandEncoder,
 }
 
 #[asset(Texture::load)]
 pub struct Texture {
-  texture: wgpu::Texture,
-  view: wgpu::TextureView,
-  sampler: wgpu::Sampler,
-  bind_group: wgpu::BindGroup,
+  pub texture: wgpu::Texture,
+  pub view: wgpu::TextureView,
+  pub sampler: wgpu::Sampler,
+  pub bind_group: wgpu::BindGroup,
 }
 
 impl Texture {
@@ -180,11 +251,7 @@ impl Texture {
     let bind_group = renderer
       .device
       .create_bind_group(&wgpu::BindGroupDescriptor {
-        layout: &world()
-          .get_resource::<StandardPass>()
-          .unwrap()
-          .0
-          .get_bind_group_layout(0),
+        layout: &renderer.tex_layout,
         entries: &[
           wgpu::BindGroupEntry {
             binding: 0,
@@ -234,16 +301,16 @@ impl Texture {
     );
   }
 
-  fn bind<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
-    render_pass.set_bind_group(0, &self.bind_group, &[]);
+  pub fn bind<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+    render_pass.set_bind_group(1, &self.bind_group, &[]);
   }
 }
 
 #[asset(Mesh::load)]
 pub struct Mesh {
-  vert_buf: wgpu::Buffer,
-  idx_buf: wgpu::Buffer,
-  len: u32,
+  pub vert_buf: wgpu::Buffer,
+  pub idx_buf: wgpu::Buffer,
+  pub len: u32,
 }
 
 impl Mesh {
@@ -251,12 +318,12 @@ impl Mesh {
     let device = &Renderer::get().device;
     Self {
       vert_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        contents: unsafe { cast_slice(verts) },
+        contents: cast_slice(verts),
         usage: wgpu::BufferUsages::VERTEX,
         label: None,
       }),
       idx_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        contents: unsafe { cast_slice(indices) },
+        contents: cast_slice(indices),
         usage: wgpu::BufferUsages::INDEX,
         label: None,
       }),
@@ -273,13 +340,14 @@ impl Mesh {
         .map(|v| Vertex {
           pos: v.position.into(),
           uv: Vec2::new(v.texture[0], 1.0 - v.texture[1]),
+          normal: v.normal.into(),
         })
         .collect::<Vec<_>>(),
       &obj.indices,
     ))
   }
 
-  fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, instances: u32) {
+  pub fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, instances: u32) {
     render_pass.set_vertex_buffer(0, self.vert_buf.slice(..));
     render_pass.set_index_buffer(self.idx_buf.slice(..), wgpu::IndexFormat::Uint32);
     render_pass.draw_indexed(0..self.len, 0, 0..instances);
@@ -287,7 +355,7 @@ impl Mesh {
 }
 
 #[asset(Shader::load)]
-pub struct Shader(wgpu::ShaderModule);
+pub struct Shader(pub wgpu::ShaderModule);
 
 impl Shader {
   fn load(data: &[u8]) -> Result<Self> {
@@ -300,10 +368,78 @@ impl Shader {
   }
 }
 
-unsafe fn cast_slice<T>(t: &[T]) -> &[u8] {
-  slice::from_raw_parts(t.as_ptr() as _, mem::size_of_val(t))
+pub trait Bindable {
+  fn get_layout(world: &World) -> wgpu::BindGroupLayout;
 }
 
-unsafe fn cast<T>(t: &T) -> &[u8] {
+pub struct Binding<T: Bindable> {
+  data: T,
+  dirty: bool,
+  buf: wgpu::Buffer,
+  bind_group: wgpu::BindGroup,
+}
+
+impl<T: Bindable> Binding<T> {
+  pub fn new(data: T) -> Self {
+    let device = &Renderer::get().device;
+    let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+      contents: cast(&data),
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      label: None,
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+      layout: &T::get_layout(world()),
+      entries: &[wgpu::BindGroupEntry {
+        binding: 0,
+        resource: buf.as_entire_binding(),
+      }],
+      label: None,
+    });
+    Self {
+      data,
+      dirty: false,
+      buf,
+      bind_group,
+    }
+  }
+
+  pub fn data(&self) -> &T {
+    &self.data
+  }
+
+  pub fn data_mut(&mut self) -> &mut T {
+    self.dirty = true;
+    &mut self.data
+  }
+
+  pub fn update(&mut self, queue: &wgpu::Queue) {
+    if self.dirty {
+      queue.write_buffer(&self.buf, 0, cast(&self.data));
+      self.dirty = false;
+    }
+  }
+
+  pub fn bind<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, n: u32) {
+    render_pass.set_bind_group(n, &self.bind_group, &[]);
+  }
+}
+
+impl<T: Bindable + Serialize> Serialize for Binding<T> {
+  fn serialize<S: Serializer>(&self, se: S) -> Result<S::Ok, S::Error> {
+    self.data.serialize(se)
+  }
+}
+
+impl<'de, T: Bindable + Deserialize<'de>> Deserialize<'de> for Binding<T> {
+  fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+    T::deserialize(de).map(|d| Binding::new(d))
+  }
+}
+
+pub fn cast_slice<T>(t: &[T]) -> &[u8] {
+  unsafe { slice::from_raw_parts(t.as_ptr() as _, mem::size_of_val(t)) }
+}
+
+pub fn cast<T>(t: &T) -> &[u8] {
   cast_slice(slice::from_ref(t))
 }

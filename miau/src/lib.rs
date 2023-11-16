@@ -4,12 +4,14 @@
   const_type_id,
   trait_alias
 )]
+extern crate self as miau;
 pub mod gfx;
 pub mod ecs;
 pub mod assets;
 pub mod scene;
 
 use std::mem::MaybeUninit;
+use std::any::Any;
 use winit::window::{WindowBuilder, Window};
 use winit::event_loop::EventLoop;
 use winit::event::{Event, WindowEvent};
@@ -17,6 +19,8 @@ use crate::gfx::Renderer;
 use crate::ecs::{World, System, stage};
 use crate::assets::Assets;
 
+#[doc(hidden)]
+pub use erased_serde;
 pub use glam as math;
 
 pub type Result<T = (), E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
@@ -33,6 +37,11 @@ impl Engine {
     self
   }
 
+  pub fn add_resource<T: Any>(self, resource: T) -> Self {
+    self.0.add_resource(resource);
+    self
+  }
+
   pub fn run(self) -> Result {
     unsafe { WORLD.write(self.0) };
     world().run_system(stage::INIT);
@@ -44,12 +53,11 @@ impl Engine {
 fn init(world: &World) -> Result {
   let event_loop = EventLoop::new()?;
   let window = WindowBuilder::new().build(&event_loop)?;
-  let assets = Assets::new()?;
-  world.add_resource(assets);
-  pollster::block_on(Renderer::init(&window, world))?; // do this for other engine resources
-
   world.add_resource(event_loop);
   world.add_resource(window);
+  Assets::init(world)?;
+  pollster::block_on(Renderer::init(world))?; // do this for other engine resources
+
   world.add_system(stage::START, start);
   world.add_system(stage::UPDATE, update);
 

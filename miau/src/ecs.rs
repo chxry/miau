@@ -1,4 +1,4 @@
-use std::{fmt, mem};
+use std::{fmt, mem, panic};
 use std::any::{Any, TypeId};
 use std::cell::{UnsafeCell, RefCell, Ref, RefMut};
 use std::ops::Deref;
@@ -11,7 +11,7 @@ use erased_serde::Deserializer as ErasedDeserializer;
 use log::error;
 use crate::Result;
 
-pub use macros::component;
+pub use miau_macros::component;
 
 pub mod stage {
   pub const INIT: u64 = 0;
@@ -128,9 +128,13 @@ impl World {
   pub fn run_system(&self, stage: u64) {
     if let Some(vec) = unsafe { &*self.systems.get() }.get(&stage) {
       for (name, sys) in vec {
+        panic::set_hook(Box::new(|info| {
+          error!("Error in system '{}': {}", *name, info);
+        }));
         if let Err(e) = sys(self) {
-          error!("Error in system '{}': {}", name, e);
+          panic!("{}", e);
         }
+        let _ = panic::take_hook();
       }
     }
   }
@@ -246,6 +250,8 @@ impl Serialize for Storage {
         if COMPONENTS.get(t).is_some() {
           CURRENT = *t;
           map.serialize_entry(&mem::transmute::<_, u64>(*t), v)?;
+        } else {
+          log::warn!("Cannot serialize {:?}", t);
         }
       }
     }

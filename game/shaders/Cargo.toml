@@ -1,5 +1,5 @@
 [package]
-name = "miau_shaders"
+name = "game_shaders"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,4 +8,5 @@ crate-type = ["dylib"]
 
 [dependencies]
 spirv-std = "0.9"
-miau_shared = { path = "../shared" }
+miau_shared = { path = "../../miau/shared" }
+game_shared = { path = "../shared" }

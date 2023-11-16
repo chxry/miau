@@ -7,25 +7,27 @@ use std::ops::Deref;
 use vach::archive::Archive;
 use serde::{Serialize, Deserialize, Deserializer, de::Error};
 use crate::{Result, world};
+use crate::ecs::World;
 
-pub use macros::asset;
+pub use miau_macros::asset;
 
 pub struct Assets {
   archive: Archive<File>,
 }
 
 impl Assets {
-  pub fn new() -> Result<Self> {
-    Ok(Self {
+  pub fn init(world: &World) -> Result {
+    world.add_resource(Self {
       archive: Archive::new(File::open("assets.vach")?)?,
-    })
+    });
+    Ok(())
   }
 
   pub fn load<T: Any>(&self, path: &str) -> Result<Handle<T>> {
     match unsafe { ASSET_LOADERS.get_mut(&TypeId::of::<T>()) } {
       Some(loader) => match loader.assets.iter().find(|h| h.path == path) {
         Some(asset) => Ok(asset.downcast()),
-        None => (loader.loader)(&self.archive.fetch(path)?.data).map(|a| {
+        None => (loader.loader)(&self.archive.fetch(format!("assets/{}", path))?.data).map(|a| {
           loader.assets.push(Handle::new(path, a.clone()));
           Handle::new(path, unsafe { a.downcast_unchecked() })
         }),

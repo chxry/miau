@@ -1,32 +1,45 @@
 use std::mem;
-use glam::Mat4;
+use miau::Result;
+use miau::ecs::{World, stage, component};
+use miau::assets::{Assets, Handle};
+use miau::math::Mat4;
+use miau::gfx::{
+  Renderer, Mesh, Shader, Frame, Vertex, Binding, Bindable, FORMAT, DEPTH_FORMAT, SAMPLES, cast,
+};
+use miau::scene::Transform;
 use serde::{Serialize, Deserialize};
-use crate::Result;
-use crate::ecs::{World, stage, component};
-use crate::assets::{Assets, Handle};
-use crate::gfx::{Renderer, Mesh, Texture, Shader, Frame, Vertex, FORMAT, DEPTH_FORMAT, SAMPLES, cast};
-use crate::scene::Transform;
+// use game_shared::FurConst;
 
-#[component]
-#[derive(Serialize, Deserialize)]
-pub struct Model {
-  pub mesh: Handle<Mesh>,
-  pub tex: Handle<Texture>,
-}
+pub struct FurPass(pub wgpu::RenderPipeline);
 
-pub struct StandardPass(pub wgpu::RenderPipeline);
-
-impl StandardPass {
+impl FurPass {
   pub fn new(world: &World) -> Result<Self> {
     let renderer = world.get_resource::<Renderer>().unwrap();
     let shader = world
       .get_resource::<Assets>()
       .unwrap()
-      .load::<Shader>("miau_shaders.spv")?;
+      .load::<Shader>("game_shaders.spv")?;
+    let furconst_layout =
+      renderer
+        .device
+        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+          entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+              ty: wgpu::BufferBindingType::Uniform,
+              has_dynamic_offset: false,
+              min_binding_size: None,
+            },
+            count: None,
+          }],
+          label: None,
+        });
+
     let pipeline_layout = renderer
       .device
       .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        bind_group_layouts: &[&renderer.scene_layout, &renderer.tex_layout],
+        bind_group_layouts: &[&renderer.scene_layout, &furconst_layout],
         push_constant_ranges: &[wgpu::PushConstantRange {
           stages: wgpu::ShaderStages::VERTEX,
           range: 0..mem::size_of::<Mat4>() as _,
@@ -76,10 +89,10 @@ impl StandardPass {
   }
 
   fn pass(world: &World) -> Result {
-    let renderer = world.get_resource::<Renderer>().unwrap();
+    let renderer = world.get_resource_mut::<Renderer>().unwrap();
     let frame = world.get_resource_mut::<Frame>().unwrap();
-    let pipeline = world.get_resource::<StandardPass>().unwrap();
-    let models = world.get::<Model>();
+    let pipeline = world.get_resource::<FurPass>().unwrap();
+    let mut models = world.get_mut::<FurModel>();
     let mut render_pass = frame
       .encoder
       .begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -87,7 +100,7 @@ impl StandardPass {
           view: &renderer.textures.fb,
           resolve_target: Some(&frame.surface_view),
           ops: wgpu::Operations {
-            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+            load: wgpu::LoadOp::Load,
             // store: wgpu::StoreOp::Store,
             store: true,
           },
@@ -95,7 +108,7 @@ impl StandardPass {
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
           view: &renderer.textures.depth,
           depth_ops: Some(wgpu::Operations {
-            load: wgpu::LoadOp::Clear(1.0),
+            load: wgpu::LoadOp::Load,
             // store: wgpu::StoreOp::Store,
             store: true,
           }),
@@ -107,13 +120,71 @@ impl StandardPass {
       });
     render_pass.set_pipeline(&pipeline.0);
     render_pass.set_bind_group(0, &renderer.scene_bind_group, &[]);
-    for (e, model) in &models {
+
+    for (e, model) in &mut models {
       if let Some(t) = e.get_one_mut::<Transform>() {
         render_pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, cast(&t.as_mat4()));
-        model.tex.bind(&mut render_pass);
-        model.mesh.render(&mut render_pass, 1);
+        model.consts.update(&renderer.queue);
+        model.consts.bind(&mut render_pass, 1);
+        model
+          .mesh
+          .render(&mut render_pass, model.consts.data().layers);
       }
     }
     Ok(())
+  }
+}
+
+#[component]
+#[derive(Serialize, Deserialize)]
+pub struct FurModel {
+  pub mesh: Handle<Mesh>,
+  pub consts: Binding<FurConst>,
+}
+
+impl FurModel {
+  pub fn new(world: &World, mesh: Handle<Mesh>) -> Self {
+    Self {
+      mesh,
+      consts: Binding::new(FurConst {
+        layers: 50,
+        density: 1000.0,
+        height: 0.25,
+      }),
+    }
+  }
+
+  pub fn layers(mut self, layers: u32) -> Self {
+    self.consts.data_mut().layers = layers;
+    self
+  }
+
+  pub fn density(mut self, density: f32) -> Self {
+    self.consts.data_mut().density = density;
+    self
+  }
+
+  pub fn height(mut self, height: f32) -> Self {
+    self.consts.data_mut().height = height;
+    self
+  }
+}
+
+// dont duplicate
+#[repr(C)]
+#[derive(Serialize, Deserialize)]
+pub struct FurConst {
+  pub layers: u32,
+  pub density: f32,
+  pub height: f32,
+}
+
+impl Bindable for FurConst {
+  fn get_layout(world: &World) -> wgpu::BindGroupLayout {
+    world
+      .get_resource::<FurPass>()
+      .unwrap()
+      .0
+      .get_bind_group_layout(1)
   }
 }

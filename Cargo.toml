@@ -1,2 +1,2 @@
 [workspace]
-members = ["miau", "miau/shaders", "editor", "game"]
+members = ["miau", "miau/shaders", "game", "game/shaders"]

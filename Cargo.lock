@@ -510,13 +510,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ea835d29036a4087793836fa931b08837ad5e957da9e23886b29586fb9b6650"
 
 [[package]]
-name = "editor"
-version = "0.1.0"
-dependencies = [
- "miau",
-]
-
-[[package]]
 name = "either"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -661,8 +654,30 @@ name = "game"
 version = "0.1.0"
 dependencies = [
  "env_logger",
+ "game_shared",
+ "glam",
  "log",
  "miau",
+ "serde",
+ "spirv-builder",
+ "vach",
+ "wgpu",
+]
+
+[[package]]
+name = "game_shaders"
+version = "0.1.0"
+dependencies = [
+ "game_shared",
+ "miau_shared",
+ "spirv-std",
+]
+
+[[package]]
+name = "game_shared"
+version = "0.1.0"
+dependencies = [
+ "glam",
 ]
 
 [[package]]
@@ -1069,16 +1084,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3bd0dd2cd90571056fdb71f6275fada10131182f84899f4b2a916e565d81d86"
 
 [[package]]
-name = "macros"
-version = "0.1.0"
-dependencies = [
- "ctor",
- "proc-macro2",
- "quote",
- "syn 2.0.39",
-]
-
-[[package]]
 name = "malloc_buf"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1144,17 +1149,42 @@ dependencies = [
  "glam",
  "image",
  "log",
- "macros",
+ "miau_macros",
+ "miau_shared",
  "obj-rs",
  "pollster",
  "rand",
  "serde",
  "serde_json",
- "shared",
  "spirv-builder",
  "vach",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "miau_macros"
+version = "0.1.0"
+dependencies = [
+ "ctor",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.39",
+]
+
+[[package]]
+name = "miau_shaders"
+version = "0.1.0"
+dependencies = [
+ "miau_shared",
+ "spirv-std",
+]
+
+[[package]]
+name = "miau_shared"
+version = "0.1.0"
+dependencies = [
+ "glam",
 ]
 
 [[package]]
@@ -1825,21 +1855,6 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
-]
-
-[[package]]
-name = "shaders"
-version = "0.1.0"
-dependencies = [
- "shared",
- "spirv-std",
-]
-
-[[package]]
-name = "shared"
-version = "0.1.0"
-dependencies = [
- "glam",
 ]
 
 [[package]]
