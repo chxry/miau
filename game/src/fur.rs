@@ -4,13 +4,17 @@ use miau::ecs::{World, stage, component};
 use miau::assets::{Assets, Handle};
 use miau::math::Mat4;
 use miau::gfx::{
-  Renderer, Mesh, Shader, Frame, Vertex, Binding, Bindable, FORMAT, DEPTH_FORMAT, SAMPLES, cast,
+  Renderer, Mesh, Shader, Frame, Vertex, Binding, Bindable, SceneConst, FORMAT, DEPTH_FORMAT,
+  SAMPLES, cast,
 };
 use miau::scene::Transform;
 use serde::{Serialize, Deserialize};
 // use game_shared::FurConst;
 
-pub struct FurPass(pub wgpu::RenderPipeline);
+pub struct FurPass {
+  pipeline: wgpu::RenderPipeline,
+  furconst_layout: wgpu::BindGroupLayout,
+}
 
 impl FurPass {
   pub fn new(world: &World) -> Result<Self> {
@@ -85,7 +89,10 @@ impl FurPass {
         label: None,
       });
     world.add_system(stage::DRAW, Self::pass);
-    Ok(Self(pipeline))
+    Ok(Self {
+      pipeline,
+      furconst_layout,
+    })
   }
 
   fn pass(world: &World) -> Result {
@@ -101,25 +108,26 @@ impl FurPass {
           resolve_target: Some(&frame.surface_view),
           ops: wgpu::Operations {
             load: wgpu::LoadOp::Load,
-            // store: wgpu::StoreOp::Store,
-            store: true,
+            store: wgpu::StoreOp::Store,
           },
         })],
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
           view: &renderer.textures.depth,
           depth_ops: Some(wgpu::Operations {
             load: wgpu::LoadOp::Load,
-            // store: wgpu::StoreOp::Store,
-            store: true,
+            store: wgpu::StoreOp::Store,
           }),
           stencil_ops: None,
         }),
-        // occlusion_query_set: None,
-        // timestamp_writes: None,
+        occlusion_query_set: None,
+        timestamp_writes: None,
         label: None,
       });
-    render_pass.set_pipeline(&pipeline.0);
-    render_pass.set_bind_group(0, &renderer.scene_bind_group, &[]);
+    render_pass.set_pipeline(&pipeline.pipeline);
+    world
+      .get_resource::<Binding<SceneConst>>()
+      .unwrap()
+      .bind(&mut render_pass, 0);
 
     for (e, model) in &mut models {
       if let Some(t) = e.get_one_mut::<Transform>() {
@@ -180,11 +188,7 @@ pub struct FurConst {
 }
 
 impl Bindable for FurConst {
-  fn get_layout(world: &World) -> wgpu::BindGroupLayout {
-    world
-      .get_resource::<FurPass>()
-      .unwrap()
-      .0
-      .get_bind_group_layout(1)
+  fn get_layout(world: &World) -> &wgpu::BindGroupLayout {
+    &world.get_resource::<FurPass>().unwrap().furconst_layout
   }
 }

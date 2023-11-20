@@ -56,11 +56,9 @@ fn init(world: &World) -> Result {
   world.add_resource(event_loop);
   world.add_resource(window);
   Assets::init(world)?;
-  pollster::block_on(Renderer::init(world))?; // do this for other engine resources
-
+  pollster::block_on(Renderer::init(world))?;
   world.add_system(stage::START, start);
   world.add_system(stage::UPDATE, update);
-
   Ok(())
 }
 
@@ -91,4 +89,18 @@ static mut WORLD: MaybeUninit<World> = MaybeUninit::uninit();
 #[inline(always)]
 fn world() -> &'static mut World {
   unsafe { WORLD.assume_init_mut() }
+}
+
+pub(crate) enum MaybeOwned<'a, T> {
+  Owned(T),
+  Borrowed(&'a T),
+}
+
+impl<'a, T> MaybeOwned<'a, T> {
+  fn borrow(&self) -> &T {
+    match self {
+      Self::Owned(t) => &t,
+      Self::Borrowed(b) => b,
+    }
+  }
 }

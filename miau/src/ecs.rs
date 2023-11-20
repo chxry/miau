@@ -2,7 +2,6 @@ use std::{fmt, mem, panic};
 use std::any::{Any, TypeId};
 use std::cell::{UnsafeCell, RefCell, Ref, RefMut};
 use std::ops::Deref;
-use std::fs::File;
 use std::collections::HashMap;
 use serde::{Serialize, Serializer, Deserialize, Deserializer};
 use serde::ser::SerializeMap;
@@ -37,11 +36,11 @@ impl World {
     }
   }
 
-  fn components(&self) -> &Storage {
+  pub(crate) fn components(&self) -> &Storage {
     unsafe { &*self.components.get() }
   }
 
-  fn components_mut(&self) -> &mut Storage {
+  pub(crate) fn components_mut(&self) -> &mut Storage {
     unsafe { &mut *self.components.get() }
   }
 
@@ -82,18 +81,6 @@ impl World {
         .collect(),
       None => vec![],
     }
-  }
-
-  pub fn save(&self) -> Result {
-    serde_json::to_writer(File::create("test")?, self.components())?;
-    // bincode::serialize_into(File::create("test")?, self.components())?;
-    Ok(())
-  }
-
-  pub fn load(&self) -> Result {
-    *self.components_mut() = serde_json::from_reader(File::open("test")?)?;
-    // *self.components_mut() = bincode::deserialize_from(File::open("test")?)?;
-    Ok(())
   }
 
   pub fn add_resource<T: Any>(&self, resource: T) {
@@ -212,7 +199,7 @@ pub static mut COMPONENTS: HashMap<
 > = HashMap::with_hasher(unsafe { mem::transmute([0u64; 2]) });
 static mut CURRENT: TypeId = TypeId::of::<()>();
 
-struct Component(Box<RefCell<dyn Any>>);
+pub(crate) struct Component(Box<RefCell<dyn Any>>);
 
 impl Component {
   fn new<T: Any>(t: T) -> Self {
@@ -234,7 +221,7 @@ impl<'de> Deserialize<'de> for Component {
   }
 }
 
-struct Storage(HashMap<TypeId, Vec<(u64, Component)>>);
+pub(crate) struct Storage(pub(crate) HashMap<TypeId, Vec<(u64, Component)>>);
 
 impl Storage {
   fn new() -> Self {

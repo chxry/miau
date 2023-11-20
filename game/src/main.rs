@@ -1,9 +1,10 @@
 mod fur;
 
+use std::fs::File;
 use log::LevelFilter;
 use miau::{Engine, Result};
 use miau::ecs::{World, stage};
-use miau::scene::{Transform, Model};
+use miau::scene::{Transform, Model, Scene};
 use miau::assets::Assets;
 use miau::math::{Vec3, Quat};
 use crate::fur::{FurPass, FurModel};
@@ -41,8 +42,8 @@ fn start(world: &World) -> Result {
       tex: assets.load("garfield.png")?,
     });
 
-  world.save()?;
-  // world.load()?;
+  Scene::from_world(world).save(File::create("assets/test.scene")?)?;
+  // assets.load::<Scene>("test.scene")?.set_world(world);
   Ok(())
 }
 

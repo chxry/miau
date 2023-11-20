@@ -4,7 +4,10 @@ use serde::{Serialize, Deserialize};
 use crate::Result;
 use crate::ecs::{World, stage, component};
 use crate::assets::{Assets, Handle};
-use crate::gfx::{Renderer, Mesh, Texture, Shader, Frame, Vertex, FORMAT, DEPTH_FORMAT, SAMPLES, cast};
+use crate::gfx::{
+  Renderer, Mesh, Texture, Shader, Frame, Vertex, Binding, SceneConst, FORMAT, DEPTH_FORMAT,
+  SAMPLES, cast,
+};
 use crate::scene::Transform;
 
 #[component]
@@ -88,25 +91,26 @@ impl StandardPass {
           resolve_target: Some(&frame.surface_view),
           ops: wgpu::Operations {
             load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-            // store: wgpu::StoreOp::Store,
-            store: true,
+            store: wgpu::StoreOp::Store,
           },
         })],
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
           view: &renderer.textures.depth,
           depth_ops: Some(wgpu::Operations {
             load: wgpu::LoadOp::Clear(1.0),
-            // store: wgpu::StoreOp::Store,
-            store: true,
+            store: wgpu::StoreOp::Store,
           }),
           stencil_ops: None,
         }),
-        // occlusion_query_set: None,
-        // timestamp_writes: None,
+        occlusion_query_set: None,
+        timestamp_writes: None,
         label: None,
       });
     render_pass.set_pipeline(&pipeline.0);
-    render_pass.set_bind_group(0, &renderer.scene_bind_group, &[]);
+    world
+      .get_resource::<Binding<SceneConst>>()
+      .unwrap()
+      .bind(&mut render_pass, 0);
     for (e, model) in &models {
       if let Some(t) = e.get_one_mut::<Transform>() {
         render_pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, cast(&t.as_mat4()));

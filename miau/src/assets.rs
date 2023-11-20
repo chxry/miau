@@ -1,7 +1,7 @@
 use std::mem;
 use std::fs::File;
 use std::collections::HashMap;
-use std::any::{Any, TypeId, type_name};
+use std::any::{Any, TypeId};
 use std::rc::Rc;
 use std::ops::Deref;
 use vach::archive::Archive;
@@ -85,7 +85,7 @@ impl<'de, T: Any> Deserialize<'de> for Handle<T> {
     Assets::get().load(&path).map_err(|e| {
       D::Error::custom(format!(
         "could not load '{}' from '{} - {}'",
-        type_name::<T>(),
+        std::any::type_name::<T>(),
         path,
         e
       ))

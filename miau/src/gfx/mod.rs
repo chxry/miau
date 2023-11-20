@@ -12,7 +12,7 @@ use crate::ecs::{World, stage};
 use crate::assets::asset;
 use crate::{Result, world};
 
-pub use miau_shared::*;
+pub use miau_shared::Vertex;
 
 // move to renderer
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
@@ -25,8 +25,6 @@ pub struct Renderer {
   pub queue: wgpu::Queue,
   pub textures: Box<Textures>,
   pub scene_layout: wgpu::BindGroupLayout,
-  pub scene_buf: wgpu::Buffer,
-  pub scene_bind_group: wgpu::BindGroup,
   pub tex_layout: wgpu::BindGroupLayout,
 }
 
@@ -57,12 +55,6 @@ impl Renderer {
 
     let textures = Box::new(Textures::new(&device, window.inner_size()));
 
-    let scene_buf = device.create_buffer(&wgpu::BufferDescriptor {
-      size: mem::size_of::<SceneConst>() as _,
-      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-      mapped_at_creation: false,
-      label: None,
-    });
     let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
       entries: &[wgpu::BindGroupLayoutEntry {
         binding: 0,
@@ -73,14 +65,6 @@ impl Renderer {
           min_binding_size: None,
         },
         count: None,
-      }],
-      label: None,
-    });
-    let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      layout: &scene_layout,
-      entries: &[wgpu::BindGroupEntry {
-        binding: 0,
-        resource: scene_buf.as_entire_binding(),
       }],
       label: None,
     });
@@ -112,12 +96,13 @@ impl Renderer {
       queue,
       textures,
       scene_layout,
-      scene_buf,
-      scene_bind_group,
       tex_layout,
     });
 
     world.add_resource(StandardPass::new(world)?);
+    world.add_resource(Binding::new(SceneConst {
+      cam: Mat4::IDENTITY,
+    }));
     Ok(())
   }
 
@@ -147,18 +132,13 @@ impl Renderer {
     let surface_view = surface
       .texture
       .create_view(&wgpu::TextureViewDescriptor::default());
-    self.queue.write_buffer(
-      &self.scene_buf,
-      0,
-      cast(&SceneConst {
-        cam: Mat4::perspective_infinite_lh(
-          1.4,
-          surface.texture.width() as f32 / surface.texture.height() as f32,
-          0.01,
-        ) * Mat4::look_at_lh(Vec3::splat(5.0), Vec3::ZERO, Vec3::Y),
-      }),
-    );
-
+    let scene_consts = world.get_resource_mut::<Binding<SceneConst>>().unwrap();
+    scene_consts.data_mut().cam = Mat4::perspective_infinite_lh(
+      1.4,
+      surface.texture.width() as f32 / surface.texture.height() as f32,
+      0.01,
+    ) * Mat4::look_at_lh(Vec3::splat(5.0), Vec3::ZERO, Vec3::Y);
+    scene_consts.update(&self.queue);
     world.add_resource(Frame {
       surface,
       surface_view,
@@ -369,7 +349,7 @@ impl Shader {
 }
 
 pub trait Bindable {
-  fn get_layout(world: &World) -> wgpu::BindGroupLayout;
+  fn get_layout(world: &World) -> &wgpu::BindGroupLayout;
 }
 
 pub struct Binding<T: Bindable> {
@@ -388,7 +368,7 @@ impl<T: Bindable> Binding<T> {
       label: None,
     });
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      layout: &T::get_layout(world()),
+      layout: T::get_layout(world()),
       entries: &[wgpu::BindGroupEntry {
         binding: 0,
         resource: buf.as_entire_binding(),
@@ -433,6 +413,19 @@ impl<T: Bindable + Serialize> Serialize for Binding<T> {
 impl<'de, T: Bindable + Deserialize<'de>> Deserialize<'de> for Binding<T> {
   fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
     T::deserialize(de).map(|d| Binding::new(d))
+  }
+}
+
+// dont duplicate
+#[repr(C)]
+#[derive(Serialize, Deserialize)]
+pub struct SceneConst {
+  cam: Mat4,
+}
+
+impl Bindable for SceneConst {
+  fn get_layout(world: &World) -> &wgpu::BindGroupLayout {
+    &world.get_resource::<Renderer>().unwrap().scene_layout
   }
 }
 
