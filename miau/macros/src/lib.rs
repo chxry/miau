@@ -24,13 +24,14 @@ pub fn component(_: TokenStream, input: TokenStream) -> TokenStream {
     static #c: extern fn() = {
       use ::std::any::{Any, TypeId};
       use ::std::cell::{RefCell, Ref};
+      use ::std::rc::Rc;
 
       fn ser(c: Ref<dyn Any>) -> Ref<dyn ::miau::erased_serde::Serialize> {
         Ref::map(c, |c| c.downcast_ref::<#ident>().unwrap())
       }
 
-      fn de(de: &mut dyn ::miau::erased_serde::Deserializer) -> Box<RefCell<dyn Any>> {
-        Box::new(RefCell::new(::miau::erased_serde::deserialize::<#ident>(de).unwrap()))
+      fn de(de: &mut dyn ::miau::erased_serde::Deserializer) -> Rc<RefCell<dyn Any>> {
+        Rc::new(RefCell::new(::miau::erased_serde::deserialize::<#ident>(de).unwrap()))
       }
 
       extern fn i() {

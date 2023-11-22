@@ -90,7 +90,7 @@ impl StandardPass {
           view: &renderer.textures.fb,
           resolve_target: Some(&frame.surface_view),
           ops: wgpu::Operations {
-            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+            load: wgpu::LoadOp::Load,
             store: wgpu::StoreOp::Store,
           },
         })],

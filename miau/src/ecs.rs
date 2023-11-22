@@ -1,7 +1,9 @@
 use std::{fmt, mem, panic};
 use std::any::{Any, TypeId};
 use std::cell::{UnsafeCell, RefCell, Ref, RefMut};
+use std::rc::Rc;
 use std::ops::Deref;
+use std::io::Write;
 use std::collections::HashMap;
 use serde::{Serialize, Serializer, Deserialize, Deserializer};
 use serde::ser::SerializeMap;
@@ -9,6 +11,7 @@ use serde::de::{Visitor, MapAccess};
 use erased_serde::Deserializer as ErasedDeserializer;
 use log::error;
 use crate::Result;
+use crate::assets::asset;
 
 pub use miau_macros::component;
 
@@ -22,7 +25,7 @@ pub mod stage {
 pub trait System = Fn(&World) -> Result;
 
 pub struct World {
-  components: UnsafeCell<Storage>,
+  components: UnsafeCell<Scene>,
   resources: UnsafeCell<HashMap<TypeId, Box<dyn Any>>>,
   systems: UnsafeCell<HashMap<u64, Vec<(&'static str, Box<dyn System>)>>>,
 }
@@ -30,17 +33,17 @@ pub struct World {
 impl World {
   pub fn new() -> Self {
     Self {
-      components: UnsafeCell::new(Storage::new()),
+      components: UnsafeCell::new(Scene::new()),
       resources: UnsafeCell::new(HashMap::new()),
       systems: UnsafeCell::new(HashMap::new()),
     }
   }
 
-  pub(crate) fn components(&self) -> &Storage {
+  pub(crate) fn components(&self) -> &Scene {
     unsafe { &*self.components.get() }
   }
 
-  pub(crate) fn components_mut(&self) -> &mut Storage {
+  pub(crate) fn components_mut(&self) -> &mut Scene {
     unsafe { &mut *self.components.get() }
   }
 
@@ -194,16 +197,17 @@ pub static mut COMPONENTS: HashMap<
   TypeId,
   (
     fn(Ref<dyn Any>) -> Ref<dyn erased_serde::Serialize>,
-    fn(&mut dyn ErasedDeserializer) -> Box<RefCell<dyn Any>>,
+    fn(&mut dyn ErasedDeserializer) -> Rc<RefCell<dyn Any>>,
   ),
 > = HashMap::with_hasher(unsafe { mem::transmute([0u64; 2]) });
 static mut CURRENT: TypeId = TypeId::of::<()>();
 
-pub(crate) struct Component(Box<RefCell<dyn Any>>);
+#[derive(Clone)]
+pub(crate) struct Component(Rc<RefCell<dyn Any>>);
 
 impl Component {
   fn new<T: Any>(t: T) -> Self {
-    Self(Box::new(RefCell::new(t)))
+    Self(Rc::new(RefCell::new(t)))
   }
 }
 
@@ -221,15 +225,34 @@ impl<'de> Deserialize<'de> for Component {
   }
 }
 
-pub(crate) struct Storage(pub(crate) HashMap<TypeId, Vec<(u64, Component)>>);
+#[asset(Scene::load)]
+#[derive(Clone)]
+pub struct Scene(HashMap<TypeId, Vec<(u64, Component)>>);
 
-impl Storage {
+impl Scene {
   fn new() -> Self {
     Self(HashMap::new())
   }
+
+  fn load(data: &[u8]) -> Result<Self> {
+    Ok(serde_json::from_slice(data)?)
+  }
+
+  pub fn save<W: Write>(&self, w: W) -> Result {
+    serde_json::to_writer(w, self)?;
+    Ok(())
+  }
+
+  pub fn from_world(world: &World) -> Self {
+    world.components().clone()
+  }
+
+  pub fn into_world(&self, world: &World) {
+    *world.components_mut() = self.clone();
+  }
 }
 
-impl Serialize for Storage {
+impl Serialize for Scene {
   fn serialize<S: Serializer>(&self, se: S) -> Result<S::Ok, S::Error> {
     let mut map = se.serialize_map(Some(self.0.len()))?;
     for (t, v) in &self.0 {
@@ -246,7 +269,7 @@ impl Serialize for Storage {
   }
 }
 
-impl<'de> Deserialize<'de> for Storage {
+impl<'de> Deserialize<'de> for Scene {
   fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
     de.deserialize_map(MapVisitor)
   }
@@ -255,10 +278,10 @@ impl<'de> Deserialize<'de> for Storage {
 struct MapVisitor;
 
 impl<'de> Visitor<'de> for MapVisitor {
-  type Value = Storage;
+  type Value = Scene;
 
   fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{}", std::any::type_name::<Storage>())
+    write!(f, "{}", std::any::type_name::<Scene>())
   }
 
   fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<Self::Value, A::Error> {
@@ -269,6 +292,6 @@ impl<'de> Visitor<'de> for MapVisitor {
         map.insert(CURRENT, a.next_value().unwrap());
       }
     }
-    Ok(Storage(map))
+    Ok(Scene(map))
   }
 }
