@@ -39,7 +39,7 @@ pub fn main_f(
   let hash = hash(local_uv.trunc());
   let distance = (local_uv.fract() * 2.0 - 1.0).length();
 
-  if n > 0 && distance > 2.5 * (hash - layer) {
+  if n > 0 && distance > consts.thickness * (hash - layer) {
     spirv_std::arch::kill();
   }
   let color = (normal + 1.0) / 2.0;

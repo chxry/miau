@@ -158,6 +158,7 @@ impl FurModel {
         layers: 50,
         density: 1000.0,
         height: 0.25,
+        thickness: 2.5,
       }),
     }
   }
@@ -176,6 +177,11 @@ impl FurModel {
     self.consts.data_mut().height = height;
     self
   }
+
+  pub fn thickness(mut self, thickness: f32) -> Self {
+    self.consts.data_mut().thickness = thickness;
+    self
+  }
 }
 
 // dont duplicate
@@ -185,6 +191,7 @@ pub struct FurConst {
   pub layers: u32,
   pub density: f32,
   pub height: f32,
+  pub thickness: f32,
 }
 
 impl Bindable for FurConst {

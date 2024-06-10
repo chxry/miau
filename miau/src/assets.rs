@@ -27,13 +27,17 @@ impl Assets {
     match unsafe { ASSET_LOADERS.get_mut(&TypeId::of::<T>()) } {
       Some(loader) => match loader.assets.iter().find(|h| h.path == path) {
         Some(asset) => Ok(asset.downcast()),
-        None => (loader.loader)(&self.archive.fetch(format!("assets/{}", path))?.data).map(|a| {
+        None => (loader.loader)(&self.load_raw(path)?).map(|a| {
           loader.assets.push(Handle::new(path, a.clone()));
           Handle::new(path, unsafe { a.downcast_unchecked() })
         }),
       },
       None => Err(format!("no loader found for '{}'", std::any::type_name::<T>()).into()),
     }
+  }
+
+  pub fn load_raw(&self, path: &str) -> Result<Vec<u8>> {
+    Ok(self.archive.fetch(format!("assets/{}", path))?.data)
   }
 
   fn get() -> &'static Self {

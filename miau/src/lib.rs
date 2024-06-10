@@ -10,6 +10,7 @@ pub mod gfx;
 pub mod ecs;
 pub mod assets;
 pub mod scene;
+pub mod ui;
 
 use std::mem::MaybeUninit;
 use std::any::Any;
@@ -68,12 +69,16 @@ fn start(world: &World) -> Result {
     .take_resource::<EventLoop<()>>()
     .unwrap()
     .run(move |event, elwt| match event {
-      Event::WindowEvent { event, .. } => match event {
-        WindowEvent::RedrawRequested => world.run_system(stage::UPDATE),
-        WindowEvent::Resized(size) => world.get_resource_mut::<Renderer>().unwrap().resize(size),
-        WindowEvent::CloseRequested => elwt.exit(),
-        _ => {}
-      },
+      Event::WindowEvent { event, .. } => {
+        match event {
+          WindowEvent::RedrawRequested => world.run_system(stage::UPDATE),
+          WindowEvent::Resized(size) => world.get_resource_mut::<Renderer>().unwrap().resize(size),
+          WindowEvent::CloseRequested => elwt.exit(),
+          _ => {}
+        }
+        world.add_resource(event);
+        world.run_system(stage::EVENT);
+      }
       Event::AboutToWait => world.get_resource::<Window>().unwrap().request_redraw(),
       _ => {}
     })?;

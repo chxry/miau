@@ -17,7 +17,7 @@ pub struct Model {
   pub tex: Handle<Texture>,
 }
 
-pub struct StandardPass(pub wgpu::RenderPipeline);
+pub struct StandardPass(wgpu::RenderPipeline);
 
 impl StandardPass {
   pub fn new(world: &World) -> Result<Self> {
@@ -90,7 +90,7 @@ impl StandardPass {
           view: &renderer.textures.fb,
           resolve_target: Some(&frame.surface_view),
           ops: wgpu::Operations {
-            load: wgpu::LoadOp::Load,
+            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
             store: wgpu::StoreOp::Store,
           },
         })],
@@ -114,7 +114,7 @@ impl StandardPass {
     for (e, model) in &models {
       if let Some(t) = e.get_one_mut::<Transform>() {
         render_pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, cast(&t.as_mat4()));
-        model.tex.bind(&mut render_pass);
+        model.tex.bind(&mut render_pass, 1);
         model.mesh.render(&mut render_pass, 1);
       }
     }

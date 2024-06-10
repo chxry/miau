@@ -9,7 +9,7 @@ use serde::{Serialize, Serializer, Deserialize, Deserializer};
 use serde::ser::SerializeMap;
 use serde::de::{Visitor, MapAccess};
 use erased_serde::Deserializer as ErasedDeserializer;
-use log::error;
+use log::{error, warn};
 use crate::Result;
 use crate::assets::asset;
 
@@ -19,7 +19,10 @@ pub mod stage {
   pub const INIT: u64 = 0;
   pub const START: u64 = 1;
   pub const UPDATE: u64 = 2;
-  pub const DRAW: u64 = 3;
+  pub const PRE_DRAW: u64 = 3;
+  pub const DRAW: u64 = 4;
+  pub const POST_DRAW: u64 = 5;
+  pub const EVENT: u64 = 6;
 }
 
 pub trait System = Fn(&World) -> Result;
@@ -261,7 +264,7 @@ impl Serialize for Scene {
           CURRENT = *t;
           map.serialize_entry(&mem::transmute::<_, u64>(*t), v)?;
         } else {
-          log::warn!("Cannot serialize {:?}", t);
+          warn!("Cannot serialize {:?}", t);
         }
       }
     }

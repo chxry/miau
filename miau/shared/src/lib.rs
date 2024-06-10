@@ -11,4 +11,5 @@ pub struct Vertex {
 #[repr(C)]
 pub struct SceneConst {
   pub cam: Mat4,
+  pub size: Vec2,
 }

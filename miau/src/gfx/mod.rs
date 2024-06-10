@@ -1,6 +1,7 @@
 pub mod standard;
 
 use std::{slice, mem};
+use std::time::{Instant, Duration};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 use winit::dpi::PhysicalSize;
@@ -10,6 +11,7 @@ use standard::StandardPass;
 use serde::{Serialize, Deserialize, Serializer, Deserializer};
 use crate::ecs::{World, stage};
 use crate::assets::asset;
+use crate::ui::UiPass;
 use crate::{Result, world};
 
 pub use miau_shared::Vertex;
@@ -23,6 +25,7 @@ pub struct Renderer {
   pub surface: wgpu::Surface,
   pub device: wgpu::Device,
   pub queue: wgpu::Queue,
+  pub last_frame: Instant,
   pub textures: Box<Textures>,
   pub scene_layout: wgpu::BindGroupLayout,
   pub tex_layout: wgpu::BindGroupLayout,
@@ -94,6 +97,7 @@ impl Renderer {
       surface,
       device,
       queue,
+      last_frame: Instant::now(),
       textures,
       scene_layout,
       tex_layout,
@@ -102,7 +106,9 @@ impl Renderer {
     world.add_resource(StandardPass::new(world)?);
     world.add_resource(Binding::new(SceneConst {
       cam: Mat4::IDENTITY,
+      size: Vec2::ZERO,
     }));
+    world.add_resource(UiPass::new(world)?);
     Ok(())
   }
 
@@ -133,18 +139,25 @@ impl Renderer {
       .texture
       .create_view(&wgpu::TextureViewDescriptor::default());
     let scene_consts = world.get_resource_mut::<Binding<SceneConst>>().unwrap();
-    scene_consts.data_mut().cam = Mat4::perspective_infinite_lh(
-      1.4,
-      surface.texture.width() as f32 / surface.texture.height() as f32,
-      0.01,
-    ) * Mat4::look_at_lh(Vec3::splat(5.0), Vec3::ZERO, Vec3::Y);
+    *scene_consts.data_mut() = SceneConst {
+      cam: Mat4::perspective_infinite_lh(
+        1.4,
+        surface.texture.width() as f32 / surface.texture.height() as f32,
+        0.01,
+      ) * Mat4::look_at_lh(Vec3::splat(5.0), Vec3::ZERO, Vec3::Y),
+      size: Vec2::new(surface.texture.width() as _, surface.texture.height() as _),
+    };
     scene_consts.update(&self.queue);
     world.add_resource(Frame {
       surface,
       surface_view,
       encoder: Box::leak(encoder),
     });
+    world.add_resource(DeltaTime(Instant::now() - self.last_frame));
+    self.last_frame = Instant::now();
+    world.run_system(stage::PRE_DRAW);
     world.run_system(stage::DRAW);
+    world.run_system(stage::POST_DRAW);
 
     let frame = world.take_resource::<Frame>().unwrap();
     self
@@ -252,15 +265,20 @@ impl Texture {
     }
   }
 
+  pub fn init(width: u32, height: u32, format: wgpu::TextureFormat, data: &[u8]) -> Self {
+    let t = Self::new(width, height, format);
+    t.write(data);
+    t
+  }
+
   fn load(data: &[u8]) -> Result<Self> {
     let img = image::load_from_memory(data)?;
-    let tex = Texture::new(
+    Ok(Self::init(
       img.width(),
       img.height(),
       wgpu::TextureFormat::Rgba8UnormSrgb,
-    );
-    tex.write(&img.to_rgba8());
-    Ok(tex)
+      &img.to_rgba8(),
+    ))
   }
 
   pub fn write(&self, data: &[u8]) {
@@ -281,8 +299,8 @@ impl Texture {
     );
   }
 
-  pub fn bind<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
-    render_pass.set_bind_group(1, &self.bind_group, &[]);
+  pub fn bind<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, n: u32) {
+    render_pass.set_bind_group(n, &self.bind_group, &[]);
   }
 }
 
@@ -416,11 +434,14 @@ impl<'de, T: Bindable + Deserialize<'de>> Deserialize<'de> for Binding<T> {
   }
 }
 
+pub struct DeltaTime(pub Duration);
+
 // dont duplicate
 #[repr(C)]
 #[derive(Serialize, Deserialize)]
 pub struct SceneConst {
   cam: Mat4,
+  size: Vec2,
 }
 
 impl Bindable for SceneConst {
